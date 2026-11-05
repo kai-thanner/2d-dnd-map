@@ -29,11 +29,11 @@ pub fn carve(w: &mut World, cfg: &Config) {
         chosen.push(s);
     }
     for start in chosen {
-        walk(w, cfg, start);
+        carve_downhill(w, cfg, start);
     }
 }
 
-fn walk(w: &mut World, cfg: &Config, start: (usize, usize)) {
+pub fn carve_downhill(w: &mut World, cfg: &Config, start: (usize, usize)) {
     let mut visited: HashSet<(usize, usize)> = HashSet::new();
     let mut path: Vec<(usize, usize)> = Vec::new();
     let mut cur = start;
