@@ -1,8 +1,9 @@
 use crate::config::Config;
 use crate::names;
-use crate::world::{Biome, Settlement, SettlementKind, World};
+use crate::world::{Biome, Settlement, World};
 use rand::rngs::StdRng;
 use rand::RngExt;
+use std::ops::Range;
 
 fn allowed(biome: Biome) -> bool {
     matches!(
@@ -12,17 +13,17 @@ fn allowed(biome: Biome) -> bool {
 }
 
 pub fn place(w: &mut World, cfg: &Config, rng: &mut StdRng) {
-    let n_cities = ((cfg.settlement_density * 6.0).round() as usize).max(1);
-    let n_villages = (cfg.settlement_density * 18.0).round() as usize;
-    place_kind(w, rng, n_cities, SettlementKind::City, true, 10.0);
-    place_kind(w, rng, n_villages, SettlementKind::Village, false, 5.0);
+    let n_big = ((cfg.settlement_density * 4.0).round() as usize).max(1);
+    let n_small = (cfg.settlement_density * 16.0).round() as usize;
+    place_range(w, rng, n_big, 2000..50000, true, 10.0);
+    place_range(w, rng, n_small, 40..1500, false, 5.0);
 }
 
-fn place_kind(
+fn place_range(
     w: &mut World,
     rng: &mut StdRng,
     count: usize,
-    kind: SettlementKind,
+    pop_range: Range<u32>,
     prefer_water: bool,
     min_dist: f32,
 ) {
@@ -51,17 +52,10 @@ fn place_kind(
         if prefer_water && !near_water && attempts % 2 == 0 {
             continue;
         }
-        let population = match kind {
-            SettlementKind::City => rng.random_range(5000..50000u32),
-            SettlementKind::Village => rng.random_range(50..600u32),
-        };
-        let name = names::settlement(rng, kind);
+        let population = rng.random_range(pop_range.clone());
+        let name = names::settlement(rng, population, w.near_ocean(x, y));
         let t = w.get_mut(x, y).unwrap();
-        t.settlement = Some(Settlement {
-            name,
-            kind,
-            population,
-        });
+        t.settlement = Some(Settlement { name, population });
         points.push((x, y));
         placed += 1;
     }

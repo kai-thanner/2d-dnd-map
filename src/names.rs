@@ -1,4 +1,4 @@
-use crate::world::SettlementKind;
+use crate::world::SettlementTier;
 use rand::rngs::StdRng;
 use rand::seq::IndexedRandom;
 
@@ -7,13 +7,22 @@ const PRE: &[&str] = &[
     "Tor", "Ul", "Val", "Wil", "Yar", "Zan", "Ash", "Kra",
 ];
 const MID: &[&str] = &["a", "e", "i", "o", "ar", "en", "or", "ia", "eth", "ow", "ui"];
-const SUF_CITY: &[&str] = &["burg", "stadt", "hafen", "thal", "furt", "mark"];
-const SUF_VILLAGE: &[&str] = &["dorf", "heim", "feld", "hain", "brück", "weiler", "au"];
+const SUF_GEHOEFT: &[&str] = &["hof", "gut", "au"];
+const SUF_DORF: &[&str] = &["dorf", "heim", "feld", "hain", "weiler"];
+const SUF_KLEINSTADT: &[&str] = &["flecken", "furt", "brück"];
+const SUF_STADT: &[&str] = &["burg", "stadt", "thal", "mark"];
+const SUF_KAISERSTADT: &[&str] = &["stadt", "burg", "krone"];
+const SUF_HAFENSTADT: &[&str] = &["hafen", "strand", "pier"];
 
-pub fn settlement(rng: &mut StdRng, kind: SettlementKind) -> String {
-    let suf = match kind {
-        SettlementKind::City => SUF_CITY,
-        SettlementKind::Village => SUF_VILLAGE,
+pub fn settlement(rng: &mut StdRng, population: u32, near_ocean: bool) -> String {
+    let tier = SettlementTier::from_population(population, near_ocean);
+    let suf: &[&str] = match tier {
+        SettlementTier::Gehoeft => SUF_GEHOEFT,
+        SettlementTier::Dorf => SUF_DORF,
+        SettlementTier::Kleinstadt => SUF_KLEINSTADT,
+        SettlementTier::Stadt => SUF_STADT,
+        SettlementTier::Kaiserstadt => SUF_KAISERSTADT,
+        SettlementTier::Hafenstadt => SUF_HAFENSTADT,
     };
     format!(
         "{}{}{}",

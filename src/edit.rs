@@ -4,9 +4,8 @@ use crate::gen::rivers;
 use crate::gen::roads;
 use crate::names;
 use crate::rng;
-use crate::world::{Biome, Poi, Settlement, SettlementKind, WaterKind, World};
+use crate::world::{Biome, Poi, Settlement, WaterKind, World};
 use rand::rngs::StdRng;
-use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,7 +23,7 @@ pub enum Edit {
     AddSettlement {
         x: usize,
         y: usize,
-        kind: SettlementKind,
+        population: u32,
         name: Option<String>,
     },
     UpdateSettlement {
@@ -108,18 +107,16 @@ impl World {
                     }
                 }
             }
-            Edit::AddSettlement { x, y, kind, name } => {
+            Edit::AddSettlement { x, y, population, name } => {
+                let near_ocean = self.near_ocean(*x, *y);
                 if let Some(t) = self.get_mut(*x, *y) {
                     if t.is_passable() && t.settlement.is_none() {
-                        let name = name.clone().unwrap_or_else(|| names::settlement(rng, *kind));
-                        let population = match kind {
-                            SettlementKind::City => rng.random_range(5000..50000u32),
-                            SettlementKind::Village => rng.random_range(50..600u32),
-                        };
+                        let name = name
+                            .clone()
+                            .unwrap_or_else(|| names::settlement(rng, *population, near_ocean));
                         t.settlement = Some(Settlement {
                             name,
-                            kind: *kind,
-                            population,
+                            population: *population,
                         });
                     }
                 }

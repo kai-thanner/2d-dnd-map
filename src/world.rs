@@ -91,15 +91,61 @@ pub enum WaterKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SettlementKind {
-    City,
-    Village,
+pub enum SettlementTier {
+    Gehoeft,
+    Dorf,
+    Kleinstadt,
+    Stadt,
+    Kaiserstadt,
+    Hafenstadt,
+}
+
+impl SettlementTier {
+    pub fn from_population(pop: u32, near_ocean: bool) -> Self {
+        let base = if pop <= 50 {
+            SettlementTier::Gehoeft
+        } else if pop <= 500 {
+            SettlementTier::Dorf
+        } else if pop <= 2000 {
+            SettlementTier::Kleinstadt
+        } else if pop <= 20000 {
+            SettlementTier::Stadt
+        } else {
+            SettlementTier::Kaiserstadt
+        };
+        if near_ocean && pop > 2000 {
+            SettlementTier::Hafenstadt
+        } else {
+            base
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            SettlementTier::Gehoeft => "Gehöft",
+            SettlementTier::Dorf => "Dorf",
+            SettlementTier::Kleinstadt => "Kleinstadt",
+            SettlementTier::Stadt => "Stadt",
+            SettlementTier::Kaiserstadt => "Kaiserstadt",
+            SettlementTier::Hafenstadt => "Hafenstadt",
+        }
+    }
+
+    pub fn marker(&self) -> char {
+        match self {
+            SettlementTier::Gehoeft => 'g',
+            SettlementTier::Dorf => 'v',
+            SettlementTier::Kleinstadt => 't',
+            SettlementTier::Stadt => 'C',
+            SettlementTier::Kaiserstadt => 'M',
+            SettlementTier::Hafenstadt => 'H',
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settlement {
     pub name: String,
-    pub kind: SettlementKind,
     pub population: u32,
 }
 
@@ -254,6 +300,20 @@ impl World {
             }
         }
         out
+    }
+
+    pub fn near_ocean(&self, x: usize, y: usize) -> bool {
+        self.neighbors8(x, y)
+            .iter()
+            .any(|n| self.get(n.0, n.1).unwrap().water == Some(WaterKind::Ocean))
+    }
+
+    pub fn settlement_tier(&self, x: usize, y: usize) -> Option<SettlementTier> {
+        let s = self.get(x, y)?.settlement.as_ref()?;
+        Some(SettlementTier::from_population(
+            s.population,
+            self.near_ocean(x, y),
+        ))
     }
 
     pub fn settlements(&self) -> Vec<(usize, usize)> {
