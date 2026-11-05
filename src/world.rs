@@ -118,6 +118,8 @@ pub struct Tile {
     pub biome: Biome,
     pub water: Option<WaterKind>,
     pub river: bool,
+    #[serde(default)]
+    pub river_width: u32,
     pub road: bool,
     pub settlement: Option<Settlement>,
     pub poi: Option<Poi>,
@@ -132,6 +134,7 @@ impl Default for Tile {
             biome: Biome::Grassland,
             water: None,
             river: false,
+            river_width: 0,
             road: false,
             settlement: None,
             poi: None,

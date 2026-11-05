@@ -76,7 +76,7 @@ fn connect_lake_outflows(w: &mut World, cfg: &Config) {
                 }
             }
             if let Some(s) = start {
-                rivers::carve_downhill(w, cfg, s);
+                rivers::carve_downhill(w, cfg.sea_level, s);
             }
         }
     }

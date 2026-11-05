@@ -25,5 +25,6 @@ pub fn generate(cfg: &Config) -> World {
     settlements::place(&mut w, cfg, &mut rng);
     roads::connect(&mut w);
     pois::place(&mut w, cfg, &mut rng);
+    rivers::recompute_river_widths(&mut w);
     w
 }

@@ -323,3 +323,50 @@ fn lakes_have_outflow_river() {
     }
     assert!(found, "kein Seed mit See gefunden - Test greift nicht");
 }
+
+#[test]
+fn river_width_accumulates_at_confluence() {
+    use dnd_2d_map::gen::rivers::recompute_river_widths;
+    let mut w = World::new(5, 3);
+    w.sea_level = 0.5;
+    let set = |w: &mut World, x: usize, y: usize, e: f32| {
+        let t = w.get_mut(x, y).unwrap();
+        t.elevation = e;
+        t.river = true;
+    };
+    set(&mut w, 0, 0, 0.9);
+    set(&mut w, 0, 2, 0.9);
+    set(&mut w, 1, 1, 0.8);
+    set(&mut w, 2, 1, 0.7);
+    recompute_river_widths(&mut w);
+    assert_eq!(w.get(0, 0).unwrap().river_width, 1);
+    assert_eq!(w.get(0, 2).unwrap().river_width, 1);
+    assert_eq!(w.get(1, 1).unwrap().river_width, 2, "zwei 1er-Fluesse muessen 2er ergeben");
+    assert_eq!(w.get(2, 1).unwrap().river_width, 2);
+}
+
+#[test]
+fn carved_river_reaches_water() {
+    use dnd_2d_map::gen::rivers::carve_downhill;
+    let cfg = test_cfg(5);
+    let mut w = gen::generate(&cfg);
+    let mut best = (0, 0);
+    let mut best_e = -1.0f32;
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let e = w.get(x, y).unwrap().elevation;
+            if e > best_e {
+                best_e = e;
+                best = (x, y);
+            }
+        }
+    }
+    let path = carve_downhill(&mut w, cfg.sea_level, best);
+    assert!(!path.is_empty(), "Flusspfad darf nicht leer sein");
+    let last = path.last().unwrap();
+    let reaches = w.get(last.0, last.1).unwrap().elevation < cfg.sea_level
+        || w.neighbors8(last.0, last.1)
+            .iter()
+            .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level);
+    assert!(reaches, "Fluss muss im Gewaesser enden, nicht im Nirgendwo");
+}

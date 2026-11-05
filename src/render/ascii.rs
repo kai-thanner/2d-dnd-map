@@ -1,5 +1,5 @@
 use crate::render::Renderer;
-use crate::world::{Biome, Poi, SettlementKind, World};
+use crate::world::{Biome, Poi, SettlementKind, WaterKind, World};
 
 pub struct AsciiRenderer;
 
@@ -69,6 +69,12 @@ impl Renderer for AsciiRenderer {
                     }
                 } else if t.road {
                     '='
+                } else if t.water == Some(WaterKind::River) {
+                    if t.river_width >= 2 {
+                        'Ξ'
+                    } else {
+                        '≋'
+                    }
                 } else {
                     Self::biome_char(t.effective_biome())
                 };

@@ -18,11 +18,11 @@ pub fn assign(w: &mut World, cfg: &Config) {
             } else if h >= 0.22 {
                 Biome::Rock
             } else {
-                let near_water = w
+                let near_ocean = w
                     .neighbors8(x, y)
                     .iter()
-                    .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level);
-                if near_water && h < 0.03 {
+                    .any(|n| w.get(n.0, n.1).unwrap().water == Some(WaterKind::Ocean));
+                if near_ocean && h < 0.03 {
                     Biome::Coast
                 } else {
                     land_biome(temp, t.moisture)

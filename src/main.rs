@@ -69,8 +69,10 @@ enum EditCmd {
     DestroySettlement { x: usize, y: usize },
     Burn { x: usize, y: usize, radius: u32 },
     Drain { x: usize, y: usize, radius: u32 },
+    #[command(alias = "see-anlegen", alias = "lake")]
     Flood { x: usize, y: usize, radius: u32 },
     Road { x1: usize, y1: usize, x2: usize, y2: usize },
+    River { x: usize, y: usize },
     Poi { x: usize, y: usize, kind: String },
     SetBiome { x: usize, y: usize, biome: String },
 }
@@ -151,6 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     from: (x1, y1),
                     to: (x2, y2),
                 }),
+                EditCmd::River { x, y } => Some(Edit::AddRiver { x, y }),
                 EditCmd::Poi { x, y, kind } => Some(Edit::AddPoi {
                     x,
                     y,

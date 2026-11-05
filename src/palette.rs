@@ -2,9 +2,9 @@ use crate::world::Biome;
 
 pub fn biome_rgb(b: Biome) -> (u8, u8, u8) {
     match b {
-        Biome::Ocean => (20, 50, 120),
-        Biome::Lake => (110, 190, 240),
-        Biome::River => (60, 110, 210),
+        Biome::Ocean => (30, 80, 170),
+        Biome::Lake => (30, 80, 170),
+        Biome::River => (30, 80, 170),
         Biome::Ice => (214, 232, 248),
         Biome::Coast => (226, 214, 162),
         Biome::Desert => (228, 198, 116),
