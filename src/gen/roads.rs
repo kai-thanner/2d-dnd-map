@@ -1,7 +1,8 @@
 use crate::noise::Noise;
-use crate::world::{Biome, World};
+use crate::world::{Biome, SettlementTier, World};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::collections::HashSet;
 
 pub fn connect(w: &mut World) {
     let points = w.settlements();
@@ -36,10 +37,16 @@ pub fn connect(w: &mut World) {
     }
 }
 
-fn step_cost(w: &World, x: usize, y: usize, from_e: f32, jitter: &Noise) -> f32 {
+fn step_cost(w: &World, ni: usize, x: usize, y: usize, from_e: f32, jitter: &Noise, ports: &HashSet<usize>) -> f32 {
     let t = w.get(x, y).unwrap();
     let base = match t.effective_biome() {
-        Biome::Ocean | Biome::Lake | Biome::Ice => 40.0,
+        Biome::Ocean | Biome::Lake | Biome::Ice => {
+            if ports.contains(&ni) {
+                6.0
+            } else {
+                f32::INFINITY
+            }
+        }
         Biome::River => 15.0,
         Biome::Mountain => 100.0,
         Biome::Rock => 25.0,
@@ -67,6 +74,15 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
             ^ ((to.0 as u64) << 5)
             ^ (to.1 as u64),
     );
+    let mut ports: HashSet<usize> = HashSet::new();
+    for (sx, sy) in w.settlements() {
+        if w.settlement_tier(sx, sy) == Some(SettlementTier::Hafenstadt) {
+            ports.insert(w.idx(sx, sy));
+            for n in w.neighbors8(sx, sy) {
+                ports.insert(w.idx(n.0, n.1));
+            }
+        }
+    }
     let n = w.tiles.len();
     let mut dist = vec![f32::INFINITY; n];
     let mut prev: Vec<Option<usize>> = vec![None; n];
@@ -88,7 +104,7 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
         let from_e = w.tiles[i].elevation;
         for (nx, ny) in w.neighbors8(x, y) {
             let ni = w.idx(nx, ny);
-            let nd = c + step_cost(w, nx, ny, from_e, &jitter);
+            let nd = c + step_cost(w, ni, nx, ny, from_e, &jitter, &ports);
             if nd < dist[ni] {
                 dist[ni] = nd;
                 prev[ni] = Some(i);
