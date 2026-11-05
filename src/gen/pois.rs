@@ -38,7 +38,7 @@ pub fn place(w: &mut World, cfg: &Config, rng: &mut StdRng) {
         let x = rng.random_range(0..w.width);
         let y = rng.random_range(0..w.height);
         let t = w.get(x, y).unwrap();
-        if t.poi.is_some() || t.settlement.is_some() || !t.biome.is_passable() {
+        if t.poi.is_some() || t.settlement.is_some() || !t.is_passable() {
             continue;
         }
         if !w.neighbors8(x, y).iter().any(|n| w.get(n.0, n.1).unwrap().road) {
