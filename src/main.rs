@@ -6,7 +6,7 @@ use dnd_2d_map::render::ascii::AsciiRenderer;
 use dnd_2d_map::render::Renderer;
 use dnd_2d_map::rng;
 use dnd_2d_map::save;
-use dnd_2d_map::world::{Biome, SettlementKind};
+use dnd_2d_map::world::Biome;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -65,7 +65,7 @@ enum EditCmd {
     RemoveDungeon { x: usize, y: usize },
     RemovePoi { x: usize, y: usize },
     Undo,
-    AddSettlement { x: usize, y: usize, kind: String, name: Option<String> },
+    AddSettlement { x: usize, y: usize, population: u32, name: Option<String> },
     DestroySettlement { x: usize, y: usize },
     Burn { x: usize, y: usize, radius: u32 },
     Drain { x: usize, y: usize, radius: u32 },
@@ -75,14 +75,6 @@ enum EditCmd {
     River { x: usize, y: usize },
     Poi { x: usize, y: usize, kind: String },
     SetBiome { x: usize, y: usize, biome: String },
-}
-
-fn parse_kind(s: &str) -> Result<SettlementKind, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "city" | "stadt" => Ok(SettlementKind::City),
-        "village" | "dorf" => Ok(SettlementKind::Village),
-        other => Err(format!("unbekannter Siedlungstyp: {other} (city|village)")),
-    }
 }
 
 fn parse_poi_kind(s: &str) -> Result<PoiKind, String> {
@@ -139,10 +131,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 EditCmd::RemoveDungeon { x, y } => Some(Edit::RemoveDungeon { x, y }),
                 EditCmd::RemovePoi { x, y } => Some(Edit::RemovePoi { x, y }),
                 EditCmd::Undo => None,
-                EditCmd::AddSettlement { x, y, kind, name } => Some(Edit::AddSettlement {
+                EditCmd::AddSettlement { x, y, population, name } => Some(Edit::AddSettlement {
                     x,
                     y,
-                    kind: parse_kind(&kind)?,
+                    population,
                     name,
                 }),
                 EditCmd::DestroySettlement { x, y } => Some(Edit::DestroySettlement { x, y }),

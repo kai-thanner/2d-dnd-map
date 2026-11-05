@@ -4,15 +4,14 @@ use dnd_2d_map::gen;
 use dnd_2d_map::palette;
 use dnd_2d_map::rng;
 use dnd_2d_map::save;
-use dnd_2d_map::world::{Biome, Poi, SettlementKind, WaterKind};
+use dnd_2d_map::world::{Biome, Poi, SettlementTier, WaterKind};
 use eframe::egui;
 use rand::rngs::StdRng;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tool {
     Select,
-    AddCity,
-    AddVillage,
+    AddSettlement,
     DestroySettlement,
     AddDungeon,
     RemovePoi,
@@ -25,10 +24,9 @@ enum Tool {
     Flood,
 }
 
-const TOOLS: [Tool; 13] = [
+const TOOLS: [Tool; 12] = [
     Tool::Select,
-    Tool::AddCity,
-    Tool::AddVillage,
+    Tool::AddSettlement,
     Tool::DestroySettlement,
     Tool::AddDungeon,
     Tool::RemovePoi,
@@ -63,8 +61,7 @@ impl Tool {
     fn label(self) -> &'static str {
         match self {
             Tool::Select => "Auswählen / Info (Klick pinnt Kachel)",
-            Tool::AddCity => "Stadt setzen (Linksklick)",
-            Tool::AddVillage => "Dorf setzen (Linksklick)",
+            Tool::AddSettlement => "Siedlung setzen (Linksklick, Default 150 Ew. – danach pinnen & Einwohner ändern)",
             Tool::DestroySettlement => "Siedlung zerstören (Linksklick)",
             Tool::AddDungeon => "Dungeon setzen (Linksklick)",
             Tool::RemovePoi => "POI entfernen (Linksklick)",
@@ -255,16 +252,10 @@ impl MapApp {
         }
         let edit = match self.tool {
             Tool::Select => None,
-            Tool::AddCity => Some(Edit::AddSettlement {
+            Tool::AddSettlement => Some(Edit::AddSettlement {
                 x: pos.0,
                 y: pos.1,
-                kind: SettlementKind::City,
-                name: None,
-            }),
-            Tool::AddVillage => Some(Edit::AddSettlement {
-                x: pos.0,
-                y: pos.1,
-                kind: SettlementKind::Village,
+                population: 150,
                 name: None,
             }),
             Tool::DestroySettlement => Some(Edit::DestroySettlement { x: pos.0, y: pos.1 }),
@@ -438,12 +429,16 @@ impl MapApp {
                 for x in x0..x1 {
                     let t = world.get(x, y).unwrap();
                     let center = origin + egui::vec2((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
-                    if let Some(s) = &t.settlement {
-                        let (col, ch) = match s.kind {
-                            SettlementKind::City => (egui::Color32::GOLD, "C"),
-                            SettlementKind::Village => (egui::Color32::from_rgb(255, 200, 120), "v"),
+                    if let Some(tier) = world.settlement_tier(x, y) {
+                        let (col, ch, rad) = match tier {
+                            SettlementTier::Gehoeft => (egui::Color32::from_rgb(170, 170, 170), "g", 0.22),
+                            SettlementTier::Dorf => (egui::Color32::from_rgb(255, 200, 120), "v", 0.28),
+                            SettlementTier::Kleinstadt => (egui::Color32::from_rgb(255, 230, 120), "t", 0.32),
+                            SettlementTier::Stadt => (egui::Color32::GOLD, "C", 0.36),
+                            SettlementTier::Kaiserstadt => (egui::Color32::from_rgb(255, 170, 40), "M", 0.44),
+                            SettlementTier::Hafenstadt => (egui::Color32::from_rgb(90, 205, 235), "H", 0.40),
                         };
-                        painter.circle_filled(center, (cell * 0.32).max(2.0), col);
+                        painter.circle_filled(center, (cell * rad).max(2.0), col);
                         painter.text(
                             center,
                             egui::Align2::CENTER_CENTER,
@@ -630,18 +625,23 @@ impl eframe::App for MapApp {
                             ui.label(b.name());
                         });
                     }
-                    ui.label("— Straße   ● C Stadt   ● v Dorf   D Dungeon   I Gasthaus   M Händler");
+                    ui.label("— Straße   ● g Gehöft  ● v Dorf  ● t Kleinstadt  ● C Stadt  ● M Kaiserstadt  ● H Hafenstadt   D Dungeon   I Gasthaus   M Händler");
                 });
 
                 ui.separator();
                 ui.heading("Kachel-Info");
                 let info_pos = self.selected.or(self.hover);
                 let info = info_pos.and_then(|(x, y)| {
-                    self.state
-                        .as_ref()
-                        .map(|s| (x, y, s.world.get(x, y).unwrap().clone()))
+                    self.state.as_ref().map(|s| {
+                        (
+                            x,
+                            y,
+                            s.world.get(x, y).unwrap().clone(),
+                            s.world.settlement_tier(x, y),
+                        )
+                    })
                 });
-                if let Some((hx, hy, t)) = info {
+                if let Some((hx, hy, t, tier)) = info {
                     ui.label(format!("Pos: ({hx}, {hy}){}", if self.selected == Some((hx, hy)) { "  [angepinnt]" } else { "" }));
                     ui.label(format!(
                         "Biom: {}   Temp: {:.1} °C",
@@ -654,7 +654,8 @@ impl eframe::App for MapApp {
                     ui.label(format!("Höhe: {:.2}   Feuchte: {:.2}", t.elevation, t.moisture));
                     ui.label(format!("Straße: {}   Fluss: {}", t.road, t.river));
                     if let Some(s) = &t.settlement {
-                        ui.label(format!("Siedlung: {} ({:?}, {} Einwohner)", s.name, s.kind, s.population));
+                        let tier_name = tier.map(|t| t.name()).unwrap_or("?");
+                        ui.label(format!("Siedlung: {} ({}, {} Einwohner)", s.name, tier_name, s.population));
                         if self.selected == Some((hx, hy)) {
                             ui.horizontal(|ui| {
                                 ui.label("Name:");

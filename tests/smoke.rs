@@ -3,7 +3,7 @@ use dnd_2d_map::edit::{Edit, GameState};
 use dnd_2d_map::gen;
 use dnd_2d_map::rng;
 use dnd_2d_map::save;
-use dnd_2d_map::world::{Biome, Poi, SettlementKind, World};
+use dnd_2d_map::world::{Biome, Poi, SettlementTier, World};
 
 fn test_cfg(seed: u64) -> Config {
     Config {
@@ -206,14 +206,18 @@ fn settlement_edits() {
         Edit::AddSettlement {
             x,
             y,
-            kind: SettlementKind::Village,
+            population: 120,
             name: Some("Testdorf".into()),
         },
         &mut rng,
     );
     let s = state.world.get(x, y).unwrap().settlement.clone().unwrap();
     assert_eq!(s.name, "Testdorf");
-    assert_eq!(s.kind, SettlementKind::Village);
+    assert_eq!(s.population, 120);
+    assert_eq!(
+        state.world.settlement_tier(x, y),
+        Some(SettlementTier::Dorf)
+    );
     state.apply(Edit::DestroySettlement { x, y }, &mut rng);
     assert!(state.world.get(x, y).unwrap().settlement.is_none());
 }
@@ -369,4 +373,21 @@ fn carved_river_reaches_water() {
             .iter()
             .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level);
     assert!(reaches, "Fluss muss im Gewaesser enden, nicht im Nirgendwo");
+}
+
+#[test]
+fn settlement_tiers_by_population() {
+    use dnd_2d_map::world::SettlementTier::*;
+    assert_eq!(SettlementTier::from_population(10, false), Gehoeft);
+    assert_eq!(SettlementTier::from_population(50, false), Gehoeft);
+    assert_eq!(SettlementTier::from_population(51, false), Dorf);
+    assert_eq!(SettlementTier::from_population(500, false), Dorf);
+    assert_eq!(SettlementTier::from_population(2000, false), Kleinstadt);
+    assert_eq!(SettlementTier::from_population(20000, false), Stadt);
+    assert_eq!(SettlementTier::from_population(20001, false), Kaiserstadt);
+    assert_eq!(SettlementTier::from_population(30000, true), Hafenstadt);
+    assert_eq!(SettlementTier::from_population(1000, true), Kleinstadt, "Kleinstadt an der Kueste ist noch kein Hafen");
+    assert_eq!(SettlementTier::from_population(300, true), Dorf, "klein + Kueste = kein Hafen");
+    assert_eq!(Gehoeft.marker(), 'g');
+    assert_eq!(Hafenstadt.marker(), 'H');
 }

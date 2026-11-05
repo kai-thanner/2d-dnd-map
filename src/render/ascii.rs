@@ -1,5 +1,5 @@
 use crate::render::Renderer;
-use crate::world::{Biome, Poi, SettlementKind, WaterKind, World};
+use crate::world::{Biome, Poi, WaterKind, World};
 
 pub struct AsciiRenderer;
 
@@ -45,7 +45,7 @@ impl AsciiRenderer {
         ] {
             s.push_str(&format!("  {} {}\n", Self::biome_char(b), b.name()));
         }
-        s.push_str("  = Straße   C Stadt   v Dorf   D Dungeon   I Gasthaus   M Händler\n");
+        s.push_str("  = Straße   g Gehöft   v Dorf   t Kleinstadt   C Stadt   M Kaiserstadt   H Hafenstadt   D Dungeon   I Gasthaus   M Händler\n");
         s
     }
 }
@@ -56,11 +56,8 @@ impl Renderer for AsciiRenderer {
         for y in 0..world.height {
             for x in 0..world.width {
                 let t = world.get(x, y).unwrap();
-                let c = if let Some(s) = &t.settlement {
-                    match s.kind {
-                        SettlementKind::City => 'C',
-                        SettlementKind::Village => 'v',
-                    }
+                let c = if let Some(tier) = world.settlement_tier(x, y) {
+                    tier.marker()
                 } else if let Some(p) = &t.poi {
                     match p {
                         Poi::Dungeon { .. } => 'D',
