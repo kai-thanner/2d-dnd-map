@@ -4,7 +4,7 @@ use dnd_2d_map::gen;
 use dnd_2d_map::palette;
 use dnd_2d_map::rng;
 use dnd_2d_map::save;
-use dnd_2d_map::world::{Biome, Poi, SettlementKind};
+use dnd_2d_map::world::{Biome, Poi, SettlementKind, WaterKind};
 use eframe::egui;
 use rand::rngs::StdRng;
 
@@ -19,12 +19,13 @@ enum Tool {
     AddInn,
     AddMerchant,
     AddRoad,
+    AddRiver,
     BurnForest,
     DrainLake,
     Flood,
 }
 
-const TOOLS: [Tool; 12] = [
+const TOOLS: [Tool; 13] = [
     Tool::Select,
     Tool::AddCity,
     Tool::AddVillage,
@@ -34,6 +35,7 @@ const TOOLS: [Tool; 12] = [
     Tool::AddInn,
     Tool::AddMerchant,
     Tool::AddRoad,
+    Tool::AddRiver,
     Tool::BurnForest,
     Tool::DrainLake,
     Tool::Flood,
@@ -69,9 +71,10 @@ impl Tool {
             Tool::AddInn => "Gasthaus setzen (Linksklick)",
             Tool::AddMerchant => "Händler setzen (Linksklick)",
             Tool::AddRoad => "Straße bauen (2 Linksklicks)",
+            Tool::AddRiver => "Fluss anlegen (Quelle anklicken)",
             Tool::BurnForest => "Wald abbrennen (Linksklick)",
             Tool::DrainLake => "See/Fluss austrocknen (Linksklick)",
-            Tool::Flood => "Land fluten (Linksklick)",
+            Tool::Flood => "See anlegen (Land fluten, Linksklick + Radius)",
         }
     }
 }
@@ -293,6 +296,7 @@ impl MapApp {
                 y: pos.1,
                 radius: self.radius,
             }),
+            Tool::AddRiver => Some(Edit::AddRiver { x: pos.0, y: pos.1 }),
             Tool::Flood => Some(Edit::Flood {
                 x: pos.0,
                 y: pos.1,
@@ -330,7 +334,7 @@ impl MapApp {
         if scroll != 0.0 {
             if let Some(p) = ui.input(|i| i.pointer.latest_pos()) {
                 if rect.contains(p) {
-                    let factor = (-scroll * 0.0016).exp();
+                    let factor = (scroll * 0.0016).exp();
                     let new_cell = (self.cell * factor).clamp(4.0, 40.0);
                     let world_pos = (p - rect.min - self.pan) / self.cell;
                     self.pan = (p - rect.min) - world_pos * new_cell;
@@ -385,6 +389,30 @@ impl MapApp {
                     let cell_rect = egui::Rect::from_min_size(c0, egui::vec2(cell, cell));
                     let (r, g, b) = palette::biome_rgb(t.effective_biome());
                     painter.rect_filled(cell_rect, 0.0, egui::Color32::from_rgb(r, g, b));
+                }
+            }
+
+            let (rr, rg, rb) = palette::biome_rgb(Biome::River);
+            let river_col = egui::Color32::from_rgb(rr, rg, rb);
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let t = world.get(x, y).unwrap();
+                    if t.water != Some(WaterKind::River) && !t.river {
+                        continue;
+                    }
+                    let wdt = t.river_width.max(1) as f32;
+                    let stroke =
+                        egui::Stroke::new((cell * 0.14 * wdt).clamp(1.5, cell * 0.9), river_col);
+                    let center =
+                        origin + egui::vec2((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
+                    for (nx, ny) in world.neighbors8(x, y) {
+                        let nt = world.get(nx, ny).unwrap();
+                        if nt.water == Some(WaterKind::River) || nt.river {
+                            let nc = origin
+                                + egui::vec2((nx as f32 + 0.5) * cell, (ny as f32 + 0.5) * cell);
+                            painter.line_segment([center, nc], stroke);
+                        }
+                    }
                 }
             }
 

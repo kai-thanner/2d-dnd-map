@@ -36,7 +36,8 @@ fn every_biome_has_a_distinct_enough_color() {
     for b in ALL_BIOMES {
         let _ = biome_rgb(b);
     }
-    assert_ne!(biome_rgb(Biome::Ocean), biome_rgb(Biome::Lake));
+    assert_eq!(biome_rgb(Biome::Ocean), biome_rgb(Biome::Lake));
+    assert_eq!(biome_rgb(Biome::River), biome_rgb(Biome::Ocean));
     assert_ne!(biome_rgb(Biome::Snow), biome_rgb(Biome::Ice));
     assert_ne!(biome_rgb(Biome::Desert), biome_rgb(Biome::Grassland));
     assert_ne!(biome_rgb(Biome::Mountain), biome_rgb(Biome::Rock));

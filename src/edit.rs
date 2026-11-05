@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::gen;
+use crate::gen::rivers;
 use crate::gen::roads;
 use crate::names;
 use crate::rng;
@@ -37,6 +38,7 @@ pub enum Edit {
     DrainLake { x: usize, y: usize, radius: u32 },
     Flood { x: usize, y: usize, radius: u32 },
     AddRoad { from: (usize, usize), to: (usize, usize) },
+    AddRiver { x: usize, y: usize },
     AddPoi { x: usize, y: usize, kind: PoiKind },
     SetBiome { x: usize, y: usize, biome: Biome },
 }
@@ -159,8 +161,10 @@ impl World {
                     if matches!(t.water, Some(WaterKind::Lake) | Some(WaterKind::River)) {
                         t.water = None;
                         t.river = false;
+                        t.river_width = 0;
                     }
                 }
+                rivers::recompute_river_widths(self);
             }
             Edit::Flood { x, y, radius } => {
                 for (px, py) in self.tiles_in_radius(*x, *y, *radius) {
@@ -193,6 +197,24 @@ impl World {
                             }
                         }
                     }
+                }
+            }
+            Edit::AddRiver { x, y } => {
+                let ok = self
+                    .get(*x, *y)
+                    .map_or(false, |t| t.elevation > self.sea_level && !t.is_water());
+                if ok {
+                    let sea_level = self.sea_level;
+                    let path = rivers::carve_downhill(self, sea_level, (*x, *y));
+                    for (px, py) in path {
+                        let t = self.get_mut(px, py).unwrap();
+                        t.water = Some(if t.temperature <= 0.0 {
+                            WaterKind::Ice
+                        } else {
+                            WaterKind::River
+                        });
+                    }
+                    rivers::recompute_river_widths(self);
                 }
             }
             Edit::AddPoi { x, y, kind } => {
