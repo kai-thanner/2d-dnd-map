@@ -1,6 +1,9 @@
+use crate::config::Config;
+use crate::gen;
 use crate::gen::roads;
 use crate::names;
-use crate::world::{Biome, Poi, Settlement, SettlementKind, World};
+use crate::rng;
+use crate::world::{Biome, Poi, Settlement, SettlementKind, WaterKind, World};
 use rand::rngs::StdRng;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
@@ -16,11 +19,18 @@ pub enum PoiKind {
 pub enum Edit {
     AddDungeon { x: usize, y: usize },
     RemoveDungeon { x: usize, y: usize },
+    RemovePoi { x: usize, y: usize },
     AddSettlement {
         x: usize,
         y: usize,
         kind: SettlementKind,
         name: Option<String>,
+    },
+    UpdateSettlement {
+        x: usize,
+        y: usize,
+        name: Option<String>,
+        population: Option<u32>,
     },
     DestroySettlement { x: usize, y: usize },
     BurnForest { x: usize, y: usize, radius: u32 },
@@ -52,6 +62,22 @@ impl GameState {
         self.revision += 1;
         self.log.push(edit);
     }
+
+    pub fn undo(&mut self, cfg: &Config) {
+        if self.log.pop().is_some() {
+            *self = rebuild(cfg, &self.log);
+        }
+    }
+}
+
+pub fn rebuild(cfg: &Config, log: &[Edit]) -> GameState {
+    let world = gen::generate(cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::edit_rng(cfg.seed);
+    for e in log {
+        state.apply(e.clone(), &mut rng);
+    }
+    state
 }
 
 impl World {
@@ -59,7 +85,7 @@ impl World {
         match edit {
             Edit::AddDungeon { x, y } => {
                 if let Some(t) = self.get_mut(*x, *y) {
-                    if t.biome.is_passable() && t.poi.is_none() {
+                    if t.is_passable() && t.poi.is_none() {
                         t.poi = Some(Poi::Dungeon {
                             name: names::dungeon(rng),
                         });
@@ -73,9 +99,16 @@ impl World {
                     }
                 }
             }
+            Edit::RemovePoi { x, y } => {
+                if let Some(t) = self.get_mut(*x, *y) {
+                    if t.poi.is_some() {
+                        t.poi = None;
+                    }
+                }
+            }
             Edit::AddSettlement { x, y, kind, name } => {
                 if let Some(t) = self.get_mut(*x, *y) {
-                    if t.biome.is_passable() && t.settlement.is_none() {
+                    if t.is_passable() && t.settlement.is_none() {
                         let name = name.clone().unwrap_or_else(|| names::settlement(rng, *kind));
                         let population = match kind {
                             SettlementKind::City => rng.random_range(5000..50000u32),
@@ -86,6 +119,18 @@ impl World {
                             kind: *kind,
                             population,
                         });
+                    }
+                }
+            }
+            Edit::UpdateSettlement { x, y, name, population } => {
+                if let Some(t) = self.get_mut(*x, *y) {
+                    if let Some(s) = &mut t.settlement {
+                        if let Some(n) = name {
+                            s.name = n.clone();
+                        }
+                        if let Some(p) = population {
+                            s.population = *p;
+                        }
                     }
                 }
             }
@@ -100,30 +145,31 @@ impl World {
             Edit::BurnForest { x, y, radius } => {
                 for (px, py) in self.tiles_in_radius(*x, *y, *radius) {
                     let t = self.get_mut(px, py).unwrap();
+                    if t.water.is_some() {
+                        continue;
+                    }
                     if matches!(t.biome, Biome::Forest | Biome::Jungle | Biome::Taiga) {
                         t.biome = Biome::Grassland;
                     }
                 }
             }
             Edit::DrainLake { x, y, radius } => {
-                let sl = self.sea_level;
                 for (px, py) in self.tiles_in_radius(*x, *y, *radius) {
                     let t = self.get_mut(px, py).unwrap();
-                    if matches!(t.biome, Biome::Lake | Biome::River) {
-                        t.biome = Biome::Coast;
+                    if matches!(t.water, Some(WaterKind::Lake) | Some(WaterKind::River)) {
+                        t.water = None;
                         t.river = false;
-                        t.elevation = (sl + 0.01).min(1.0);
                     }
                 }
             }
             Edit::Flood { x, y, radius } => {
-                let sl = self.sea_level;
                 for (px, py) in self.tiles_in_radius(*x, *y, *radius) {
                     let t = self.get_mut(px, py).unwrap();
-                    if t.biome.is_passable() && !matches!(t.biome, Biome::Rock) {
-                        t.biome = Biome::Lake;
-                        t.river = false;
-                        t.elevation = (sl - 0.02).max(0.0);
+                    if t.water.is_none()
+                        && t.is_passable()
+                        && !matches!(t.biome, Biome::Rock)
+                    {
+                        t.water = Some(WaterKind::Lake);
                     }
                 }
             }
@@ -151,7 +197,7 @@ impl World {
             }
             Edit::AddPoi { x, y, kind } => {
                 if let Some(t) = self.get_mut(*x, *y) {
-                    if t.poi.is_none() && t.biome.is_passable() {
+                    if t.poi.is_none() && t.is_passable() {
                         t.poi = Some(match kind {
                             PoiKind::Dungeon => Poi::Dungeon {
                                 name: names::dungeon(rng),
