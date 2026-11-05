@@ -83,6 +83,14 @@ impl FromStr for Biome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WaterKind {
+    Ocean,
+    Lake,
+    River,
+    Ice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SettlementKind {
     City,
     Village,
@@ -108,6 +116,7 @@ pub struct Tile {
     pub moisture: f32,
     pub temperature: f32,
     pub biome: Biome,
+    pub water: Option<WaterKind>,
     pub river: bool,
     pub road: bool,
     pub settlement: Option<Settlement>,
@@ -121,11 +130,35 @@ impl Default for Tile {
             moisture: 0.0,
             temperature: 0.0,
             biome: Biome::Grassland,
+            water: None,
             river: false,
             road: false,
             settlement: None,
             poi: None,
         }
+    }
+}
+
+impl Tile {
+    pub fn effective_biome(&self) -> Biome {
+        match self.water {
+            Some(WaterKind::Ocean) => Biome::Ocean,
+            Some(WaterKind::Lake) => Biome::Lake,
+            Some(WaterKind::River) => Biome::River,
+            Some(WaterKind::Ice) => Biome::Ice,
+            None => self.biome,
+        }
+    }
+
+    pub fn is_water(&self) -> bool {
+        self.water.is_some()
+    }
+
+    pub fn is_passable(&self) -> bool {
+        !matches!(
+            self.effective_biome(),
+            Biome::Ocean | Biome::Lake | Biome::Ice | Biome::Mountain
+        )
     }
 }
 
