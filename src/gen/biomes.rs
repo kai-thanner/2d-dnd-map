@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::world::{Biome, World};
+use crate::world::{Biome, WaterKind, World};
 
 pub fn assign(w: &mut World, cfg: &Config) {
     for y in 0..w.height {
@@ -9,10 +9,10 @@ pub fn assign(w: &mut World, cfg: &Config) {
                 continue;
             }
             let h = t.elevation - cfg.sea_level;
-            let biome = if t.temperature <= 0.0 {
+            let temp = t.temperature;
+            let river = t.river;
+            let land = if temp <= 0.0 {
                 Biome::Snow
-            } else if t.river {
-                Biome::River
             } else if h >= 0.34 {
                 Biome::Mountain
             } else if h >= 0.22 {
@@ -25,10 +25,18 @@ pub fn assign(w: &mut World, cfg: &Config) {
                 if near_water && h < 0.03 {
                     Biome::Coast
                 } else {
-                    land_biome(t.temperature, t.moisture)
+                    land_biome(temp, t.moisture)
                 }
             };
-            w.get_mut(x, y).unwrap().biome = biome;
+            let t = w.get_mut(x, y).unwrap();
+            t.biome = land;
+            if river {
+                t.water = Some(if temp <= 0.0 {
+                    WaterKind::Ice
+                } else {
+                    WaterKind::River
+                });
+            }
         }
     }
 }
