@@ -18,7 +18,7 @@ fn first_free_land(w: &World) -> (usize, usize) {
     for y in 0..w.height {
         for x in 0..w.width {
             let t = w.get(x, y).unwrap();
-            if t.biome.is_passable() && t.settlement.is_none() && t.poi.is_none() {
+            if t.is_passable() && t.settlement.is_none() && t.poi.is_none() {
                 return (x, y);
             }
         }
@@ -80,16 +80,16 @@ fn freezing_everything_becomes_snow_or_ice() {
     for y in 0..w.height {
         for x in 0..w.width {
             let t = w.get(x, y).unwrap();
-            if t.elevation < cfg.sea_level {
+            if t.is_water() {
                 assert!(
-                    matches!(t.biome, Biome::Ice),
+                    matches!(t.effective_biome(), Biome::Ice),
                     "Wasser bei {}°C muss Ice sein, ist {:?}",
                     t.temperature,
                     t.biome
                 );
             } else {
                 assert!(
-                    matches!(t.biome, Biome::Snow),
+                    matches!(t.effective_biome(), Biome::Snow),
                     "Land bei {}°C muss Snow sein, ist {:?}",
                     t.temperature,
                     t.biome
@@ -150,7 +150,7 @@ fn road_edit_connects_points() {
     for y in 0..state.world.height {
         for x in 0..state.world.width {
             let t = state.world.get(x, y).unwrap();
-            if t.biome.is_passable() && World::dist((x, y), a) > 15.0 {
+            if t.is_passable() && World::dist((x, y), a) > 15.0 {
                 b = (x, y);
             }
         }
@@ -185,7 +185,7 @@ fn burn_forest_edit() {
     let mut rng = rng::from_seed(1);
     let forest = (0..state.world.height)
         .flat_map(|y| (0..state.world.width).map(move |x| (x, y)))
-        .find(|(x, y)| matches!(state.world.get(*x, *y).unwrap().biome, Biome::Forest));
+        .find(|(x, y)| { let t = state.world.get(*x, *y).unwrap(); t.water.is_none() && t.biome == Biome::Forest });
     if let Some((x, y)) = forest {
         state.apply(Edit::BurnForest { x, y, radius: 1 }, &mut rng);
         assert!(matches!(
@@ -216,4 +216,110 @@ fn settlement_edits() {
     assert_eq!(s.kind, SettlementKind::Village);
     state.apply(Edit::DestroySettlement { x, y }, &mut rng);
     assert!(state.world.get(x, y).unwrap().settlement.is_none());
+}
+
+#[test]
+fn flood_then_drain_restores_original_land() {
+    let cfg = test_cfg(23);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::edit_rng(cfg.seed);
+    let (x, y) = first_free_land(&state.world);
+    let original = state.world.get(x, y).unwrap().biome;
+    state.apply(Edit::Flood { x, y, radius: 2 }, &mut rng);
+    let t = state.world.get(x, y).unwrap();
+    assert_eq!(t.effective_biome(), Biome::Lake);
+    assert_eq!(t.biome, original, "Land-Biom darf durch Flutung nicht ueberschrieben werden");
+    state.apply(Edit::DrainLake { x, y, radius: 2 }, &mut rng);
+    let t = state.world.get(x, y).unwrap();
+    assert!(t.water.is_none());
+    assert_eq!(t.effective_biome(), original, "Nach dem Austrocknen muss das urspruengliche Land zurueckkommen");
+}
+
+#[test]
+fn remove_poi_edit_removes_any_poi() {
+    use dnd_2d_map::edit::PoiKind;
+    let cfg = test_cfg(29);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::edit_rng(cfg.seed);
+    let (x, y) = first_free_land(&state.world);
+    state.apply(Edit::AddPoi { x, y, kind: PoiKind::Inn }, &mut rng);
+    assert!(matches!(
+        state.world.get(x, y).unwrap().poi,
+        Some(Poi::Inn { .. })
+    ));
+    state.apply(Edit::RemovePoi { x, y }, &mut rng);
+    assert!(state.world.get(x, y).unwrap().poi.is_none());
+}
+
+#[test]
+fn undo_rebuilds_state_from_log() {
+    use dnd_2d_map::edit::{rebuild, PoiKind};
+    let cfg = test_cfg(31);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::edit_rng(cfg.seed);
+    let (x, y) = first_free_land(&state.world);
+    state.apply(Edit::AddDungeon { x, y }, &mut rng);
+    let (x2, y2) = first_free_land(&state.world);
+    state.apply(Edit::AddPoi { x: x2, y: y2, kind: PoiKind::Merchant }, &mut rng);
+    assert_eq!(state.revision, 2);
+    let log_before = state.log.clone();
+    state.undo(&cfg);
+    assert_eq!(state.revision, 1);
+    let expected = rebuild(&cfg, &log_before[..1]);
+    assert_eq!(state, expected);
+}
+
+#[test]
+fn lakes_have_outflow_river() {
+    use dnd_2d_map::world::WaterKind;
+    let mut found = false;
+    for seed in 1..=30u64 {
+        let cfg = Config {
+            seed,
+            width: 100,
+            height: 50,
+            ..Config::default()
+        };
+        let w = gen::generate(&cfg);
+        if !w.tiles.iter().any(|t| t.water == Some(WaterKind::Lake)) {
+            continue;
+        }
+        found = true;
+        let mut visited = vec![false; w.tiles.len()];
+        for y in 0..w.height {
+            for x in 0..w.width {
+                let i = w.idx(x, y);
+                if visited[i] || w.tiles[i].water != Some(WaterKind::Lake) {
+                    continue;
+                }
+                let mut comp = Vec::new();
+                let mut stack = vec![(x, y)];
+                visited[i] = true;
+                while let Some((cx, cy)) = stack.pop() {
+                    comp.push((cx, cy));
+                    for n in w.neighbors8(cx, cy) {
+                        let ni = w.idx(n.0, n.1);
+                        if !visited[ni] && w.tiles[ni].water == Some(WaterKind::Lake) {
+                            visited[ni] = true;
+                            stack.push(n);
+                        }
+                    }
+                }
+                let has_outflow = comp.iter().any(|(lx, ly)| {
+                    w.neighbors8(*lx, *ly).iter().any(|n| {
+                        let nt = w.get(n.0, n.1).unwrap();
+                        nt.water == Some(WaterKind::River)
+                            || nt.water == Some(WaterKind::Ocean)
+                            || nt.elevation < cfg.sea_level
+                    })
+                });
+                assert!(has_outflow, "See-Komponente bei ({x},{y}) (Seed {seed}) hat keinen Zu-/Abfluss");
+            }
+        }
+        break;
+    }
+    assert!(found, "kein Seed mit See gefunden - Test greift nicht");
 }

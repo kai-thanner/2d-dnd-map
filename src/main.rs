@@ -63,6 +63,8 @@ struct EditArgs {
 enum EditCmd {
     AddDungeon { x: usize, y: usize },
     RemoveDungeon { x: usize, y: usize },
+    RemovePoi { x: usize, y: usize },
+    Undo,
     AddSettlement { x: usize, y: usize, kind: String, name: Option<String> },
     DestroySettlement { x: usize, y: usize },
     Burn { x: usize, y: usize, radius: u32 },
@@ -131,41 +133,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Edit(a) => {
             let (cfg, mut state) = save::load(&a.file)?;
             let edit = match a.cmd {
-                EditCmd::AddDungeon { x, y } => Edit::AddDungeon { x, y },
-                EditCmd::RemoveDungeon { x, y } => Edit::RemoveDungeon { x, y },
-                EditCmd::AddSettlement { x, y, kind, name } => Edit::AddSettlement {
+                EditCmd::AddDungeon { x, y } => Some(Edit::AddDungeon { x, y }),
+                EditCmd::RemoveDungeon { x, y } => Some(Edit::RemoveDungeon { x, y }),
+                EditCmd::RemovePoi { x, y } => Some(Edit::RemovePoi { x, y }),
+                EditCmd::Undo => None,
+                EditCmd::AddSettlement { x, y, kind, name } => Some(Edit::AddSettlement {
                     x,
                     y,
                     kind: parse_kind(&kind)?,
                     name,
-                },
-                EditCmd::DestroySettlement { x, y } => Edit::DestroySettlement { x, y },
-                EditCmd::Burn { x, y, radius } => Edit::BurnForest { x, y, radius },
-                EditCmd::Drain { x, y, radius } => Edit::DrainLake { x, y, radius },
-                EditCmd::Flood { x, y, radius } => Edit::Flood { x, y, radius },
-                EditCmd::Road { x1, y1, x2, y2 } => Edit::AddRoad {
+                }),
+                EditCmd::DestroySettlement { x, y } => Some(Edit::DestroySettlement { x, y }),
+                EditCmd::Burn { x, y, radius } => Some(Edit::BurnForest { x, y, radius }),
+                EditCmd::Drain { x, y, radius } => Some(Edit::DrainLake { x, y, radius }),
+                EditCmd::Flood { x, y, radius } => Some(Edit::Flood { x, y, radius }),
+                EditCmd::Road { x1, y1, x2, y2 } => Some(Edit::AddRoad {
                     from: (x1, y1),
                     to: (x2, y2),
-                },
-                EditCmd::Poi { x, y, kind } => Edit::AddPoi {
+                }),
+                EditCmd::Poi { x, y, kind } => Some(Edit::AddPoi {
                     x,
                     y,
                     kind: parse_poi_kind(&kind)?,
-                },
-                EditCmd::SetBiome { x, y, biome } => Edit::SetBiome {
+                }),
+                EditCmd::SetBiome { x, y, biome } => Some(Edit::SetBiome {
                     x,
                     y,
                     biome: Biome::from_str(&biome)?,
-                },
+                }),
             };
-            let mut rng = rng::from_seed(cfg.seed ^ 0xED17_5EED);
-            state.apply(edit, &mut rng);
+            match edit {
+                Some(e) => {
+                    let mut rng = rng::edit_rng(cfg.seed);
+                    state.apply(e, &mut rng);
+                    println!("Edit angewendet, Revision {}", state.revision);
+                }
+                None => {
+                    state.undo(&cfg);
+                    println!("Rückgängig gemacht, Revision {}", state.revision);
+                }
+            }
             save::save(&a.file, &cfg, &state)?;
-            println!(
-                "Edit angewendet, Revision {} – gespeichert: {}",
-                state.revision,
-                a.file.display()
-            );
+            println!("Gespeichert: {}", a.file.display());
             print!("{}", AsciiRenderer.render(&state.world));
         }
     }

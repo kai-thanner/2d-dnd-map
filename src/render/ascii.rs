@@ -7,7 +7,7 @@ impl AsciiRenderer {
     pub fn biome_char(b: Biome) -> char {
         match b {
             Biome::Ocean => '~',
-            Biome::Lake => '≈',
+            Biome::Lake => 'o',
             Biome::River => '≋',
             Biome::Ice => '❄',
             Biome::Coast => ',',
@@ -45,7 +45,7 @@ impl AsciiRenderer {
         ] {
             s.push_str(&format!("  {} {}\n", Self::biome_char(b), b.name()));
         }
-        s.push_str("  = Straße   C Stadt   o Dorf   D Dungeon   I Gasthaus   M Händler\n");
+        s.push_str("  = Straße   C Stadt   v Dorf   D Dungeon   I Gasthaus   M Händler\n");
         s
     }
 }
@@ -59,7 +59,7 @@ impl Renderer for AsciiRenderer {
                 let c = if let Some(s) = &t.settlement {
                     match s.kind {
                         SettlementKind::City => 'C',
-                        SettlementKind::Village => 'o',
+                        SettlementKind::Village => 'v',
                     }
                 } else if let Some(p) = &t.poi {
                     match p {
@@ -70,7 +70,7 @@ impl Renderer for AsciiRenderer {
                 } else if t.road {
                     '='
                 } else {
-                    Self::biome_char(t.biome)
+                    Self::biome_char(t.effective_biome())
                 };
                 out.push(c);
             }

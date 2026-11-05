@@ -36,9 +36,9 @@ pub fn connect(w: &mut World) {
     }
 }
 
-fn step_cost(w: &World, x: usize, y: usize, jitter: &Noise) -> f32 {
+fn step_cost(w: &World, x: usize, y: usize, from_e: f32, jitter: &Noise) -> f32 {
     let t = w.get(x, y).unwrap();
-    let base = match t.biome {
+    let base = match t.effective_biome() {
         Biome::Ocean | Biome::Lake | Biome::Ice => 40.0,
         Biome::River => 15.0,
         Biome::Mountain => 100.0,
@@ -52,7 +52,8 @@ fn step_cost(w: &World, x: usize, y: usize, jitter: &Noise) -> f32 {
     } else {
         1.0
     };
-    (base + jitter.fbm(x as f32 * 0.35, y as f32 * 0.35, 2) * 3.0) * discount
+    let hill = (t.elevation - from_e).abs() * 6.0;
+    (base + hill + jitter.fbm(x as f32 * 0.18, y as f32 * 0.18, 3) * 6.0) * discount
 }
 
 pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option<Vec<(usize, usize)>> {
@@ -84,9 +85,10 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
         }
         let x = i % w.width;
         let y = i / w.width;
+        let from_e = w.tiles[i].elevation;
         for (nx, ny) in w.neighbors8(x, y) {
             let ni = w.idx(nx, ny);
-            let nd = c + step_cost(w, nx, ny, &jitter);
+            let nd = c + step_cost(w, nx, ny, from_e, &jitter);
             if nd < dist[ni] {
                 dist[ni] = nd;
                 prev[ni] = Some(i);

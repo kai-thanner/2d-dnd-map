@@ -35,7 +35,7 @@ fn place_kind(
         let x = rng.random_range(0..w.width);
         let y = rng.random_range(0..w.height);
         let t = w.get(x, y).unwrap();
-        if t.settlement.is_some() || t.poi.is_some() || t.road {
+        if t.settlement.is_some() || t.poi.is_some() || t.road || t.is_water() {
             continue;
         }
         if !allowed(t.biome) {
@@ -46,7 +46,7 @@ fn place_kind(
         }
         let near_water = w.tiles_in_radius(x, y, 6).iter().any(|n| {
             let nt = w.get(n.0, n.1).unwrap();
-            nt.river || nt.biome.is_water()
+            nt.river || nt.is_water()
         });
         if prefer_water && !near_water && attempts % 2 == 0 {
             continue;
