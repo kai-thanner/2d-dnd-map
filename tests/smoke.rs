@@ -1,0 +1,219 @@
+use dnd_2d_map::config::{Climate, Config};
+use dnd_2d_map::edit::{Edit, GameState};
+use dnd_2d_map::gen;
+use dnd_2d_map::rng;
+use dnd_2d_map::save;
+use dnd_2d_map::world::{Biome, Poi, SettlementKind, World};
+
+fn test_cfg(seed: u64) -> Config {
+    Config {
+        seed,
+        width: 80,
+        height: 40,
+        ..Config::default()
+    }
+}
+
+fn first_free_land(w: &World) -> (usize, usize) {
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let t = w.get(x, y).unwrap();
+            if t.biome.is_passable() && t.settlement.is_none() && t.poi.is_none() {
+                return (x, y);
+            }
+        }
+    }
+    panic!("kein freies Land gefunden");
+}
+
+#[test]
+fn same_seed_same_world() {
+    let cfg = test_cfg(42);
+    let a = gen::generate(&cfg);
+    let b = gen::generate(&cfg);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn different_seed_different_world() {
+    let a = gen::generate(&test_cfg(1));
+    let b = gen::generate(&test_cfg(2));
+    assert_ne!(a, b);
+}
+
+#[test]
+fn north_is_colder_than_south() {
+    let w = gen::generate(&test_cfg(7));
+    let avg = |y0: usize, y1: usize| -> f32 {
+        let mut s = 0.0;
+        let mut n = 0;
+        for y in y0..y1 {
+            for x in 0..w.width {
+                s += w.get(x, y).unwrap().temperature;
+                n += 1;
+            }
+        }
+        s / n as f32
+    };
+    let north = avg(0, 5);
+    let south = avg(w.height - 5, w.height);
+    assert!(
+        north < south,
+        "Norden ({north}°C) sollte kälter sein als Süden ({south}°C)"
+    );
+}
+
+#[test]
+fn freezing_everything_becomes_snow_or_ice() {
+    let cfg = Config {
+        seed: 3,
+        width: 40,
+        height: 20,
+        climate: Climate {
+            south_temp: -10.0,
+            north_temp: -20.0,
+            lapse_per_unit: 55.0,
+        },
+        ..Config::default()
+    };
+    let w = gen::generate(&cfg);
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let t = w.get(x, y).unwrap();
+            if t.elevation < cfg.sea_level {
+                assert!(
+                    matches!(t.biome, Biome::Ice),
+                    "Wasser bei {}°C muss Ice sein, ist {:?}",
+                    t.temperature,
+                    t.biome
+                );
+            } else {
+                assert!(
+                    matches!(t.biome, Biome::Snow),
+                    "Land bei {}°C muss Snow sein, ist {:?}",
+                    t.temperature,
+                    t.biome
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn save_load_roundtrip() {
+    let cfg = test_cfg(9);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::from_seed(cfg.seed);
+    let (lx, ly) = first_free_land(&state.world);
+    state.apply(Edit::AddDungeon { x: lx, y: ly }, &mut rng);
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "dnd2dmap-test-{}-{}.json",
+        cfg.seed,
+        std::process::id()
+    ));
+    save::save(&path, &cfg, &state).unwrap();
+    let (cfg2, state2) = save::load(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    assert_eq!(cfg.seed, cfg2.seed);
+    assert_eq!(state, state2);
+}
+
+#[test]
+fn edit_add_and_remove_dungeon() {
+    let cfg = test_cfg(11);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::from_seed(1);
+    let (x, y) = first_free_land(&state.world);
+    state.apply(Edit::AddDungeon { x, y }, &mut rng);
+    assert!(matches!(
+        state.world.get(x, y).unwrap().poi,
+        Some(Poi::Dungeon { .. })
+    ));
+    assert_eq!(state.revision, 1);
+    state.apply(Edit::RemoveDungeon { x, y }, &mut rng);
+    assert!(state.world.get(x, y).unwrap().poi.is_none());
+    assert_eq!(state.revision, 2);
+    assert_eq!(state.log.len(), 2);
+}
+
+#[test]
+fn road_edit_connects_points() {
+    let cfg = test_cfg(13);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::from_seed(1);
+    let a = first_free_land(&state.world);
+    let mut b = a;
+    for y in 0..state.world.height {
+        for x in 0..state.world.width {
+            let t = state.world.get(x, y).unwrap();
+            if t.biome.is_passable() && World::dist((x, y), a) > 15.0 {
+                b = (x, y);
+            }
+        }
+    }
+    state.apply(Edit::AddRoad { from: a, to: b }, &mut rng);
+    let w = &state.world;
+    assert!(w.get(a.0, a.1).unwrap().road, "Startpunkt muss Straße sein");
+    assert!(w.get(b.0, b.1).unwrap().road, "Zielpunkt muss Straße sein");
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![a];
+    while let Some(p) = stack.pop() {
+        if !seen.insert(p) {
+            continue;
+        }
+        if p == b {
+            return;
+        }
+        for n in w.neighbors8(p.0, p.1) {
+            if w.get(n.0, n.1).unwrap().road {
+                stack.push(n);
+            }
+        }
+    }
+    panic!("Straße verbindet Start und Ziel nicht");
+}
+
+#[test]
+fn burn_forest_edit() {
+    let cfg = test_cfg(17);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::from_seed(1);
+    let forest = (0..state.world.height)
+        .flat_map(|y| (0..state.world.width).map(move |x| (x, y)))
+        .find(|(x, y)| matches!(state.world.get(*x, *y).unwrap().biome, Biome::Forest));
+    if let Some((x, y)) = forest {
+        state.apply(Edit::BurnForest { x, y, radius: 1 }, &mut rng);
+        assert!(matches!(
+            state.world.get(x, y).unwrap().biome,
+            Biome::Grassland
+        ));
+    }
+}
+
+#[test]
+fn settlement_edits() {
+    let cfg = test_cfg(19);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::from_seed(1);
+    let (x, y) = first_free_land(&state.world);
+    state.apply(
+        Edit::AddSettlement {
+            x,
+            y,
+            kind: SettlementKind::Village,
+            name: Some("Testdorf".into()),
+        },
+        &mut rng,
+    );
+    let s = state.world.get(x, y).unwrap().settlement.clone().unwrap();
+    assert_eq!(s.name, "Testdorf");
+    assert_eq!(s.kind, SettlementKind::Village);
+    state.apply(Edit::DestroySettlement { x, y }, &mut rng);
+    assert!(state.world.get(x, y).unwrap().settlement.is_none());
+}
