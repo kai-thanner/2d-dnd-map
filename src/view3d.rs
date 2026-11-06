@@ -31,7 +31,7 @@ impl View3D {
         } else {
             d * self.e_scale
         };
-        v.clamp(-64.0, 64.0)
+        v.clamp(0.0, 64.0)
     }
 
     pub fn project(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32, center: (f32, f32)) -> (f32, f32) {
@@ -40,31 +40,31 @@ impl View3D {
         let (sa, ca) = (a.sin(), a.cos());
         let dx = x - cx;
         let dy = y - cy;
-        let tx = dx + e * 0.5 * sa * ca;
-        let ty = dy * sa - e * self.hf * ca;
         let r = self.rot_deg.to_radians();
         let (s, c) = (r.sin(), r.cos());
-        let rx = tx * c - ty * s;
-        let ry = tx * s + ty * c;
+        let rx = dx * c - dy * s;
+        let ry = dx * s + dy * c;
+        let tx = rx + e * 0.5 * sa * ca;
+        let ty = ry * sa - e * self.hf * ca;
         (
-            center.0 + self.pan.0 + rx * self.cell,
-            center.1 + self.pan.1 + ry * self.cell,
+            center.0 + self.pan.0 + tx * self.cell,
+            center.1 + self.pan.1 + ty * self.cell,
         )
     }
 
     pub fn unproject(&self, p: (f32, f32), cx: f32, cy: f32, center: (f32, f32), e_hint: f32) -> (f32, f32) {
         let vx = (p.0 - center.0 - self.pan.0) / self.cell;
         let vy = (p.1 - center.1 - self.pan.1) / self.cell;
-        let r = self.rot_deg.to_radians();
-        let (s, c) = (r.sin(), r.cos());
-        let tx = vx * c + vy * s;
-        let ty = -vx * s + vy * c;
         let a = self.tilt_deg.to_radians();
         let (sa, ca) = (a.sin().max(0.17), a.cos());
         let e = self.disp_e(e_hint);
+        let rx = vx - e * 0.5 * sa * ca;
+        let ry = (vy + e * self.hf * ca) / sa;
+        let r = self.rot_deg.to_radians();
+        let (s, c) = (r.sin(), r.cos());
         (
-            cx + tx - e * 0.5 * sa * ca,
-            cy + (ty + e * self.hf * ca) / sa,
+            cx + rx * c + ry * s,
+            cy + -rx * s + ry * c,
         )
     }
 

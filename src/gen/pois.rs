@@ -58,7 +58,10 @@ pub fn place(w: &mut World, cfg: &Config, rng: &mut StdRng) {
     for (x, y) in &settlements {
         if let Some(t) = w.get_mut(*x, *y) {
             if t.poi.is_none() {
-                let (name, goods) = names::merchant(rng);
+                let (mut name, goods) = names::merchant(rng);
+                if rng.random_range(0..100) < 15 {
+                    name = names::famous_merchant(rng);
+                }
                 t.poi = Some(Poi::Merchant { name, goods });
             }
         }

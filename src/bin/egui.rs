@@ -119,6 +119,8 @@ struct MapApp {
     selected_screen: Option<egui::Pos2>,
     edit_name: String,
     edit_pop: u32,
+    edit_poi_name: String,
+    edit_poi_goods: String,
     map_name: Option<String>,
     dirty: bool,
     save_open: bool,
@@ -147,6 +149,8 @@ impl Default for MapApp {
             selected_screen: None,
             edit_name: String::new(),
             edit_pop: 0,
+            edit_poi_name: String::new(),
+            edit_poi_goods: String::new(),
             map_name: None,
             dirty: false,
             save_open: false,
@@ -283,6 +287,22 @@ impl MapApp {
         if let Some(Some(s)) = data {
             self.edit_name = s.name;
             self.edit_pop = s.population;
+        }
+        let poi = sel.and_then(|(x, y)| {
+            self.state
+                .as_ref()
+                .map(|s| s.world.get(x, y).unwrap().poi.clone())
+        });
+        match poi {
+            Some(Some(Poi::Merchant { name, goods })) => {
+                self.edit_poi_name = name;
+                self.edit_poi_goods = goods;
+            }
+            Some(Some(Poi::Dungeon { name })) | Some(Some(Poi::Inn { name })) => {
+                self.edit_poi_name = name;
+                self.edit_poi_goods.clear();
+            }
+            _ => {}
         }
     }
 
@@ -1106,11 +1126,17 @@ impl eframe::App for MapApp {
                 });
                 if let Some((hx, hy, t, tier)) = info {
                     ui.label(format!("Pos: ({hx}, {hy})"));
+                    let h_m = (t.elevation - self.cfg.sea_level) * self.cfg.max_elevation_m;
+                    let h_label = if h_m >= 0.0 {
+                        format!("Höhe: {:.0} m", h_m)
+                    } else {
+                        format!("Tiefe: {:.0} m", -h_m)
+                    };
                     ui.label(format!(
-                        "Biom: {}   Temp: {:.1} °C   Höhe: {:.0} m",
+                        "Biom: {}   Temp: {:.1} °C   {}",
                         t.effective_biome(),
                         t.temperature,
-                        (t.elevation - self.cfg.sea_level).max(0.0) * self.cfg.max_elevation_m
+                        h_label
                     ));
                     if t.is_water() {
                         ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
@@ -1166,11 +1192,17 @@ impl eframe::App for MapApp {
                             .map(|t| (t.clone(), st.world.settlement_tier(sel.0, sel.1)))
                     });
                     if let Some((t, tier)) = info {
+                        let h_m = (t.elevation - self.cfg.sea_level) * self.cfg.max_elevation_m;
+                        let h_label = if h_m >= 0.0 {
+                            format!("Höhe: {:.0} m", h_m)
+                        } else {
+                            format!("Tiefe: {:.0} m", -h_m)
+                        };
                         ui.label(format!(
-                            "Biom: {}   Temp: {:.1} °C   Höhe: {:.0} m",
+                            "Biom: {}   Temp: {:.1} °C   {}",
                             t.effective_biome(),
                             t.temperature,
-                            (t.elevation - self.cfg.sea_level).max(0.0) * self.cfg.max_elevation_m
+                            h_label
                         ));
                         if t.is_water() {
                             ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
@@ -1235,7 +1267,41 @@ impl eframe::App for MapApp {
                             }
                         }
                         if let Some(p) = &t.poi {
-                            ui.label(format!("POI: {p:?}"));
+                            let (kind_label, is_merchant) = match p {
+                                Poi::Dungeon { .. } => ("Dungeon", false),
+                                Poi::Inn { .. } => ("Gasthaus", false),
+                                Poi::Merchant { .. } => ("Händler", true),
+                            };
+                            ui.label(format!("POI: {kind_label}"));
+                            ui.horizontal(|ui| {
+                                ui.label("Name:");
+                                ui.text_edit_singleline(&mut self.edit_poi_name);
+                            });
+                            if is_merchant {
+                                ui.horizontal(|ui| {
+                                    ui.label("Waren:");
+                                    ui.text_edit_singleline(&mut self.edit_poi_goods);
+                                });
+                            }
+                            if ui.button("POI aktualisieren").clicked() {
+                                let state = self.state.as_mut().unwrap();
+                                state.apply(
+                                    Edit::UpdatePoi {
+                                        x: sel.0,
+                                        y: sel.1,
+                                        name: Some(self.edit_poi_name.clone()),
+                                        goods: if is_merchant {
+                                            Some(self.edit_poi_goods.clone())
+                                        } else {
+                                            None
+                                        },
+                                    },
+                                    &mut self.rng,
+                                );
+                                self.dirty = true;
+                                self.status =
+                                    format!("POI aktualisiert – Revision {}", state.revision);
+                            }
                         }
                         ui.label("Schließen: X oben rechts oder ESC.");
                     }

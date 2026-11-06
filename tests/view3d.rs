@@ -101,7 +101,7 @@ fn disp_e_matches_dimension_model() {
     assert!((v.disp_e(1.0) - 6.0).abs() < 1e-4, "Gipfel = 6 Kacheln ueber Wasser");
     assert!(v.disp_e(0.5).abs() < 1e-6, "Wasserspiegel = 0");
     assert!(
-        (v.disp_e(0.0) + 3.0).abs() < 1e-4,
-        "max. Wassertiefe = sea_level x max. Berghoehe = 3 Kacheln"
+        v.disp_e(0.0).abs() < 1e-6,
+        "Wassertiefe wird nicht gerendert (disp_e >= 0); Wert bleibt in elevation gespeichert"
     );
 }
