@@ -91,6 +91,13 @@ struct MapApp {
     edit_for: Option<(usize, usize)>,
     edit_name: String,
     edit_pop: u32,
+    map_name: Option<String>,
+    dirty: bool,
+    save_open: bool,
+    save_input: String,
+    load_open: bool,
+    load_entries: Vec<(String, String)>,
+    load_warn: Option<String>,
     status: String,
 }
 
@@ -111,6 +118,13 @@ impl Default for MapApp {
             edit_for: None,
             edit_name: String::new(),
             edit_pop: 0,
+            map_name: None,
+            dirty: false,
+            save_open: false,
+            save_input: "karte.json".to_string(),
+            load_open: false,
+            load_entries: Vec::new(),
+            load_warn: None,
             status: "Bereit – Werte links einstellen und „Generieren“ drücken.".to_string(),
         }
     }
@@ -123,33 +137,71 @@ impl MapApp {
         self.rng = rng::edit_rng(self.cfg.seed);
         self.road_from = None;
         self.selected = None;
+        self.map_name = None;
+        self.dirty = true;
         self.status = format!(
             "Karte generiert (Seed {}, {}×{})",
             self.cfg.seed, self.cfg.width, self.cfg.height
         );
     }
 
-    fn save(&mut self) {
-        match &self.state {
-            Some(state) => {
-                let path = std::path::Path::new(&self.file_path);
-                match save::save(path, &self.cfg, state) {
-                    Ok(()) => {
-                        self.status = format!(
-                            "Gespeichert: {} (Revision {})",
-                            self.file_path, state.revision
-                        )
-                    }
-                    Err(e) => self.status = format!("Fehler beim Speichern: {e}"),
-                }
+    fn open_save_dialog(&mut self) {
+        if self.state.is_none() {
+            self.status = "Nichts zu speichern – erst generieren.".to_string();
+            return;
+        }
+        self.save_input = self.file_path.clone();
+        self.save_open = true;
+    }
+
+    fn do_save(&mut self) {
+        let Some(state) = &self.state else { return };
+        let path = std::path::Path::new(&self.save_input);
+        match save::save(path, &self.cfg, state) {
+            Ok(()) => {
+                self.file_path = self.save_input.clone();
+                self.map_name = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string());
+                self.dirty = false;
+                let rev = state.revision;
+                self.status = format!("Gespeichert als „{}“ (Revision {rev})", self.save_input);
             }
-            None => self.status = "Nichts zu speichern – erst generieren.".to_string(),
+            Err(e) => self.status = format!("Fehler beim Speichern: {e}"),
         }
     }
 
-    fn load(&mut self) {
-        let path = std::path::Path::new(&self.file_path);
-        match save::load(path) {
+    fn scan_saves(&mut self) {
+        self.load_entries.clear();
+        let dir = std::path::Path::new(&self.file_path)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().map_or(false, |x| x == "json") {
+                    if let Ok((_cfg, st)) = save::load(&p) {
+                        let name = p.file_stem().unwrap().to_string_lossy().to_string();
+                        self.load_entries
+                            .push((format!("{name}  (Revision {})", st.revision), p.to_string_lossy().to_string()));
+                    }
+                }
+            }
+        }
+        self.load_entries.sort();
+    }
+
+    fn open_load_dialog(&mut self) {
+        self.scan_saves();
+        self.load_warn = None;
+        self.load_open = true;
+    }
+
+    fn do_load(&mut self, path: &str) {
+        let p = std::path::Path::new(path);
+        match save::load(p) {
             Ok((cfg, state)) => {
                 self.cfg = cfg;
                 self.rng = rng::edit_rng(self.cfg.seed);
@@ -157,7 +209,10 @@ impl MapApp {
                 self.selected = None;
                 let rev = state.revision;
                 self.state = Some(state);
-                self.status = format!("Geladen: {} (Revision {rev})", self.file_path);
+                self.file_path = path.to_string();
+                self.map_name = p.file_stem().map(|s| s.to_string_lossy().to_string());
+                self.dirty = false;
+                self.status = format!("Geladen: {path} (Revision {rev})");
             }
             Err(e) => self.status = format!("Fehler beim Laden: {e}"),
         }
@@ -177,6 +232,7 @@ impl MapApp {
         let state = self.state.as_mut().unwrap();
         state.undo(&cfg);
         self.road_from = None;
+        self.dirty = true;
         self.status = format!("Rückgängig – Revision {}", state.revision);
     }
 
@@ -211,6 +267,7 @@ impl MapApp {
             Some(e) => {
                 let state = self.state.as_mut().unwrap();
                 state.apply(e, &mut self.rng);
+                self.dirty = true;
                 self.status = format!(
                     "Entfernt an ({}, {}) – Revision {}",
                     pos.0, pos.1, state.revision
@@ -243,6 +300,7 @@ impl MapApp {
                 .count();
             let state = self.state.as_mut().unwrap();
             state.apply(Edit::AddRoad { from, to: pos }, &mut self.rng);
+            self.dirty = true;
             let after = state.world.tiles.iter().filter(|t| t.road).count();
             self.status = format!(
                 "Straße ({},{}) → ({},{}) prozedural gebaut, +{} Straßenkacheln (Revision {})",
@@ -297,6 +355,7 @@ impl MapApp {
         if let Some(e) = edit {
             let state = self.state.as_mut().unwrap();
             state.apply(e, &mut self.rng);
+            self.dirty = true;
             self.status = format!("{} – Revision {}", self.tool.label(), state.revision);
         }
     }
@@ -510,12 +569,12 @@ impl eframe::App for MapApp {
                         self.generate();
                         ui.close();
                     }
-                    if ui.button("Speichern").clicked() {
-                        self.save();
+                    if ui.button("Speichern…").clicked() {
+                        self.open_save_dialog();
                         ui.close();
                     }
-                    if ui.button("Laden").clicked() {
-                        self.load();
+                    if ui.button("Laden…").clicked() {
+                        self.open_load_dialog();
                         ui.close();
                     }
                     if ui.button("Rückgängig (Ctrl+Z)").clicked() {
@@ -564,16 +623,17 @@ impl eframe::App for MapApp {
 
                 ui.separator();
                 ui.heading("Datei");
+                let name_label = match &self.map_name {
+                    Some(n) => format!("Kartenname: {n}{}", if self.dirty { "  (ungespeichert)" } else { "" }),
+                    None => "Karte noch nicht gespeichert".to_string(),
+                };
+                ui.label(name_label);
                 ui.horizontal(|ui| {
-                    ui.label("Pfad:");
-                    ui.add(egui::TextEdit::singleline(&mut self.file_path).desired_width(200.0));
-                });
-                ui.horizontal(|ui| {
-                    if ui.button("Speichern").clicked() {
-                        self.save();
+                    if ui.button("Speichern…").clicked() {
+                        self.open_save_dialog();
                     }
-                    if ui.button("Laden").clicked() {
-                        self.load();
+                    if ui.button("Laden…").clicked() {
+                        self.open_load_dialog();
                     }
                     if ui.button("Spiel starten").clicked() {
                         self.start_game();
@@ -705,6 +765,75 @@ impl eframe::App for MapApp {
         egui::containers::Panel::bottom("statusbar").show(ui, |ui| {
             ui.label(&self.status);
         });
+
+        if self.save_open {
+            let mut open = true;
+            let title = self
+                .map_name
+                .clone()
+                .unwrap_or_else(|| "Karte nicht gespeichert".to_string());
+            egui::Window::new(format!("Speichern – {title}"))
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    if self.map_name.is_none() {
+                        ui.label("Noch nicht gespeichert – Dateiname angeben:");
+                    }
+                    ui.horizontal(|ui| {
+                        ui.label("Datei:");
+                        ui.text_edit_singleline(&mut self.save_input);
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Speichern").clicked() {
+                            self.do_save();
+                            self.save_open = false;
+                        }
+                        if ui.button("Abbrechen").clicked() {
+                            self.save_open = false;
+                        }
+                    });
+                });
+            self.save_open = open && self.save_open;
+        }
+
+        if self.load_open {
+            let mut open = true;
+            egui::Window::new("Karte laden")
+                .open(&mut open)
+                .show(ui.ctx(), |ui| {
+                    if let Some(warn) = self.load_warn.clone() {
+                        ui.label("Achtung: die aktuelle Karte ist noch nicht gespeichert!");
+                        ui.label(format!("Wirklich „{warn}“ laden und Änderungen verlieren?"));
+                        ui.horizontal(|ui| {
+                            if ui.button("Trotzdem laden").clicked() {
+                                self.load_warn = None;
+                                self.do_load(&warn);
+                                self.load_open = false;
+                            }
+                            if ui.button("Abbrechen").clicked() {
+                                self.load_warn = None;
+                            }
+                        });
+                    } else {
+                        let entries = self.load_entries.clone();
+                        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                            if entries.is_empty() {
+                                ui.label("Keine gespeicherten Karten gefunden (*.json im aktuellen Verzeichnis).");
+                            }
+                            for (label, path) in entries {
+                                if ui.button(label).clicked() {
+                                    if self.dirty && self.state.is_some() {
+                                        self.load_warn = Some(path);
+                                    } else {
+                                        self.do_load(&path);
+                                        self.load_open = false;
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+            self.load_open = open && self.load_open;
+        }
     }
 }
 

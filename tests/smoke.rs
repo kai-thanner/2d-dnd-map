@@ -141,20 +141,15 @@ fn edit_add_and_remove_dungeon() {
 
 #[test]
 fn road_edit_connects_points() {
-    let cfg = test_cfg(13);
-    let world = gen::generate(&cfg);
+    let mut world = World::new(30, 20);
+    world.sea_level = 0.0;
+    for t in &mut world.tiles {
+        t.elevation = 0.5;
+    }
     let mut state = GameState::new(world);
     let mut rng = rng::from_seed(1);
-    let a = first_free_land(&state.world);
-    let mut b = a;
-    for y in 0..state.world.height {
-        for x in 0..state.world.width {
-            let t = state.world.get(x, y).unwrap();
-            if t.is_passable() && World::dist((x, y), a) > 15.0 {
-                b = (x, y);
-            }
-        }
-    }
+    let a = (0, 0);
+    let b = (29, 19);
     state.apply(Edit::AddRoad { from: a, to: b }, &mut rng);
     let w = &state.world;
     assert!(w.get(a.0, a.1).unwrap().road, "Startpunkt muss Straße sein");
@@ -175,6 +170,80 @@ fn road_edit_connects_points() {
         }
     }
     panic!("Straße verbindet Start und Ziel nicht");
+}
+
+#[test]
+fn road_on_empty_land_always_connects() {
+    let mut w = World::new(20, 10);
+    w.sea_level = 0.0;
+    for t in &mut w.tiles {
+        t.elevation = 0.5;
+    }
+    let path = dnd_2d_map::gen::roads::carve_path(&w, (0, 0), (19, 9)).unwrap();
+    assert_eq!(path.first(), Some(&(0, 0)));
+    assert_eq!(path.last(), Some(&(19, 9)));
+}
+
+#[test]
+fn big_map_does_not_overflow_river_widths() {
+    let cfg = Config {
+        seed: 1,
+        width: 320,
+        height: 320,
+        ..Config::default()
+    };
+    let w = gen::generate(&cfg);
+    assert!(w.tiles.iter().all(|t| t.river_width <= 8));
+}
+
+#[test]
+fn sea_level_zero_does_not_crash() {
+    let cfg = Config {
+        seed: 1,
+        width: 150,
+        height: 150,
+        sea_level: 0.0,
+        ..Config::default()
+    };
+    let w = gen::generate(&cfg);
+    assert!(w.tiles.iter().all(|t| t.river_width <= 8));
+}
+
+#[test]
+fn roads_cross_water_only_at_harbors() {
+    use dnd_2d_map::world::SettlementTier;
+    for seed in 1..=10u64 {
+        let cfg = Config {
+            seed,
+            width: 100,
+            height: 50,
+            ..Config::default()
+        };
+        let w = gen::generate(&cfg);
+        for y in 0..w.height {
+            for x in 0..w.width {
+                let t = w.get(x, y).unwrap();
+                if t.road
+                    && matches!(
+                        t.water,
+                        Some(dnd_2d_map::world::WaterKind::Ocean)
+                            | Some(dnd_2d_map::world::WaterKind::Lake)
+                            | Some(dnd_2d_map::world::WaterKind::Ice)
+                    )
+                {
+                    let near_port = w
+                        .neighbors8(x, y)
+                        .iter()
+                        .chain(std::iter::once(&(x, y)))
+                        .any(|n| w.settlement_tier(n.0, n.1) == Some(SettlementTier::Hafenstadt));
+                    assert!(
+                        near_port,
+                        "Straße auf Wasser ohne Hafen bei ({x},{y}) seed {seed}"
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]

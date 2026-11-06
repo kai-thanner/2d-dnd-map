@@ -82,36 +82,68 @@ pub fn carve_downhill(w: &mut World, sea_level: f32, start: (usize, usize)) -> V
     path
 }
 
+const MAX_RIVER_WIDTH: u64 = 8;
+
 pub fn recompute_river_widths(w: &mut World) {
-    let mut order: Vec<(usize, usize)> = Vec::new();
+    let mut river_tiles: Vec<(usize, usize)> = Vec::new();
     for y in 0..w.height {
         for x in 0..w.width {
             if w.get(x, y).unwrap().river {
-                order.push((x, y));
+                river_tiles.push((x, y));
             }
         }
     }
-    order.sort_by(|a, b| {
-        let ea = w.get(a.0, a.1).unwrap().elevation;
-        let eb = w.get(b.0, b.1).unwrap().elevation;
-        eb.partial_cmp(&ea).unwrap()
-    });
-    let mut widths: HashMap<(usize, usize), u32> = HashMap::new();
-    for (x, y) in &order {
-        let e = w.get(*x, *y).unwrap().elevation;
-        let upstream: u32 = w
-            .neighbors8(*x, *y)
-            .iter()
-            .filter(|n| {
-                let nt = w.get(n.0, n.1).unwrap();
-                nt.river && nt.elevation > e
-            })
-            .map(|n| *widths.get(n).unwrap_or(&1))
-            .sum();
-        let width = if upstream == 0 { 1 } else { upstream };
-        widths.insert((*x, *y), width);
+    let mut downstream: HashMap<(usize, usize), Option<(usize, usize)>> = HashMap::new();
+    for r in &river_tiles {
+        let e_r = w.get(r.0, r.1).unwrap().elevation;
+        let mut best: Option<(usize, usize)> = None;
+        let mut best_e = e_r;
+        for n in w.neighbors8(r.0, r.1) {
+            let nt = w.get(n.0, n.1).unwrap();
+            if nt.river && nt.elevation < best_e {
+                best_e = nt.elevation;
+                best = Some(n);
+            }
+        }
+        downstream.insert(*r, best);
     }
-    for ((x, y), width) in widths {
-        w.get_mut(x, y).unwrap().river_width = width;
+    let mut memo: HashMap<(usize, usize), u32> = HashMap::new();
+    let mut visiting: HashSet<(usize, usize)> = HashSet::new();
+    for r in &river_tiles {
+        width_of(w, *r, &downstream, &mut memo, &mut visiting);
     }
+    for (r, v) in &memo {
+        if let Some(t) = w.get_mut(r.0, r.1) {
+            t.river_width = *v;
+        }
+    }
+}
+
+fn width_of(
+    w: &World,
+    r: (usize, usize),
+    downstream: &HashMap<(usize, usize), Option<(usize, usize)>>,
+    memo: &mut HashMap<(usize, usize), u32>,
+    visiting: &mut HashSet<(usize, usize)>,
+) -> u32 {
+    if let Some(v) = memo.get(&r) {
+        return *v;
+    }
+    if !visiting.insert(r) {
+        return 1;
+    }
+    let mut sum: u64 = 0;
+    for n in w.neighbors8(r.0, r.1) {
+        if w.get(n.0, n.1).unwrap().river && downstream.get(&n) == Some(&Some(r)) {
+            sum = sum.saturating_add(width_of(w, n, downstream, memo, visiting) as u64);
+        }
+    }
+    visiting.remove(&r);
+    let v = if sum == 0 {
+        1
+    } else {
+        sum.min(MAX_RIVER_WIDTH) as u32
+    };
+    memo.insert(r, v);
+    v
 }
