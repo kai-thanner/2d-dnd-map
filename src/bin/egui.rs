@@ -1003,7 +1003,7 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Berghöhe (m)"));
                 ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=5000.0).text("Baumgrenze (m)"));
                 ui.label(format!(
-                    "Kartenmaße: {}x{} Kacheln à {:.0} m (14 px) = {:.1} km x {:.1} km = {:.0} km²; max. Wassertiefe = sea_level x max. Berghöhe",
+                    "Kartenmaße: {}x{} Kacheln à {:.0} m (14 px) = {:.1} km x {:.1} km = {:.0} km²",
                     self.cfg.width,
                     self.cfg.height,
                     TILE_SIZE_M,
