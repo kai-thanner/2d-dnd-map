@@ -27,6 +27,15 @@ fn bilinear_elev(w: &World, fx: f32, fy: f32) -> f32 {
     e0 + (e1 - e0) * ty
 }
 
+fn height_m(e: f32, sea: f32, max_h: f32) -> f32 {
+    let d = e - sea;
+    if d >= 0.0 {
+        d / (1.0 - sea).max(0.01) * max_h
+    } else {
+        d * max_h
+    }
+}
+
 fn is_edge_tile(w: &World, x: usize, y: usize) -> bool {
     let t = w.get(x, y).unwrap();
     let eb = t.effective_biome();
@@ -1126,7 +1135,7 @@ impl eframe::App for MapApp {
                 });
                 if let Some((hx, hy, t, tier)) = info {
                     ui.label(format!("Pos: ({hx}, {hy})"));
-                    let h_m = (t.elevation - self.cfg.sea_level) * self.cfg.max_elevation_m;
+                    let h_m = height_m(t.elevation, self.cfg.sea_level, self.cfg.max_elevation_m);
                     let h_label = if h_m >= 0.0 {
                         format!("Höhe: {:.0} m", h_m)
                     } else {
@@ -1192,7 +1201,7 @@ impl eframe::App for MapApp {
                             .map(|t| (t.clone(), st.world.settlement_tier(sel.0, sel.1)))
                     });
                     if let Some((t, tier)) = info {
-                        let h_m = (t.elevation - self.cfg.sea_level) * self.cfg.max_elevation_m;
+                        let h_m = height_m(t.elevation, self.cfg.sea_level, self.cfg.max_elevation_m);
                         let h_label = if h_m >= 0.0 {
                             format!("Höhe: {:.0} m", h_m)
                         } else {
