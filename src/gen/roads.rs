@@ -1,5 +1,5 @@
 use crate::noise::Noise;
-use crate::world::{Biome, World};
+use crate::world::{Biome, Tile, WaterKind, World};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
@@ -124,7 +124,8 @@ fn reachable_settlements(
 fn step_cost(w: &World, ni: usize, x: usize, y: usize, from_e: f32, jitter: &Noise, ports: &HashSet<usize>) -> f32 {
     let t = w.get(x, y).unwrap();
     let base = match t.effective_biome() {
-        Biome::Ocean | Biome::Lake | Biome::Ice => {
+        Biome::Ocean | Biome::Ice => f32::INFINITY,
+        Biome::Lake => {
             if ports.contains(&ni) {
                 6.0
             } else {
@@ -223,6 +224,14 @@ pub fn has_adjacent_road(w: &World, p: (usize, usize)) -> bool {
             .any(|n| w.get(n.0, n.1).unwrap().road)
 }
 
+fn road_navigable_water(t: &Tile) -> bool {
+    match t.water {
+        Some(WaterKind::Lake) => true,
+        Some(WaterKind::River) => t.river_width >= 2,
+        _ => false,
+    }
+}
+
 pub fn compute_ports(w: &World) -> HashSet<usize> {
     let mut ports: HashSet<usize> = HashSet::new();
     let mut visited = vec![false; w.tiles.len()];
@@ -260,12 +269,12 @@ pub fn compute_ports(w: &World) -> HashSet<usize> {
                 }
             }
             if settled {
-                // schiffbares Gewaesser: von der Kueste besiedelter Landmassen erreichbares Wasser
+                // schiffbares Binnengewaesser: von der Kueste besiedelter Landmassen erreichbare Seen/breite Fluesse (nie Ocean)
                 let mut wstack: Vec<(usize, usize)> = Vec::new();
                 for (cx, cy) in &comp {
                     for n in w.neighbors8(*cx, *cy) {
                         let nt = w.get(n.0, n.1).unwrap();
-                        if World::is_port_water_tile(nt) && !ports.contains(&w.idx(n.0, n.1)) {
+                        if road_navigable_water(nt) && !ports.contains(&w.idx(n.0, n.1)) {
                             ports.insert(w.idx(n.0, n.1));
                             wstack.push(n);
                         }
@@ -274,7 +283,7 @@ pub fn compute_ports(w: &World) -> HashSet<usize> {
                 while let Some((x, y)) = wstack.pop() {
                     for n in w.neighbors8(x, y) {
                         let ni = w.idx(n.0, n.1);
-                        if !ports.contains(&ni) && World::is_port_water_tile(w.get(n.0, n.1).unwrap()) {
+                        if !ports.contains(&ni) && road_navigable_water(w.get(n.0, n.1).unwrap()) {
                             ports.insert(ni);
                             wstack.push(n);
                         }

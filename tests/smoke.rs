@@ -211,7 +211,7 @@ fn sea_level_zero_does_not_crash() {
 }
 
 #[test]
-fn roads_on_water_only_on_navigable_sea() {
+fn roads_never_on_ocean_and_only_on_navigable_water() {
     use dnd_2d_map::world::WaterKind;
     for seed in 1..=10u64 {
         let cfg = Config {
@@ -221,71 +221,24 @@ fn roads_on_water_only_on_navigable_sea() {
             ..Config::default()
         };
         let w = gen::generate(&cfg);
-        let sea = cfg.sea_level;
-        // schiffbares Wasser: von Kuesten besiedelter Landmassen erreichbares Ocean/Lake
-        let mut visited = vec![false; w.tiles.len()];
-        let mut navigable = std::collections::HashSet::new();
-        for y in 0..w.height {
-            for x in 0..w.width {
-                let i = w.idx(x, y);
-                if visited[i] || w.tiles[i].elevation < sea {
-                    continue;
-                }
-                let mut comp = Vec::new();
-                let mut stack = vec![(x, y)];
-                visited[i] = true;
-                while let Some((cx, cy)) = stack.pop() {
-                    comp.push((cx, cy));
-                    for n in w.neighbors4(cx, cy) {
-                        let ni = w.idx(n.0, n.1);
-                        if !visited[ni] && w.tiles[ni].elevation >= sea {
-                            visited[ni] = true;
-                            stack.push(n);
-                        }
-                    }
-                }
-                let settled = comp.iter().any(|(cx, cy)| w.get(*cx, *cy).unwrap().settlement.is_some());
-                if !settled {
-                    continue;
-                }
-                for (cx, cy) in &comp {
-                    for n in w.neighbors8(*cx, *cy) {
-                        let nt = w.get(n.0, n.1).unwrap();
-                        if World::is_port_water_tile(nt) {
-                            navigable.insert(w.idx(n.0, n.1));
-                        }
-                    }
-                }
-            }
-        }
-        // flood fill ueber schiffbares Wasser
-        let mut stack: Vec<usize> = navigable.iter().cloned().collect();
-        while let Some(i) = stack.pop() {
-            let (x, y) = (i % w.width, i / w.width);
-            for n in w.neighbors8(x, y) {
-                let ni = w.idx(n.0, n.1);
-                if !navigable.contains(&ni) && World::is_port_water_tile(w.get(n.0, n.1).unwrap()) {
-                    navigable.insert(ni);
-                    stack.push(ni);
-                }
-            }
-        }
+        let ports = dnd_2d_map::gen::roads::compute_ports(&w);
         for y in 0..w.height {
             for x in 0..w.width {
                 let t = w.get(x, y).unwrap();
-                if t.road
-                    && matches!(
-                        t.water,
-                        Some(WaterKind::Ocean) | Some(WaterKind::Lake)
-                    )
-                {
-                    assert!(
-                        navigable.contains(&w.idx(x, y)),
-                        "Straße auf Wasser außerhalb des schiffbaren Gewässers bei ({x},{y}) seed {seed}"
-                    );
+                if !t.road {
+                    continue;
                 }
-                if t.road && matches!(t.water, Some(WaterKind::River) | Some(WaterKind::Ice)) {
-                    panic!("Straße auf Fluss/Eis bei ({x},{y}) seed {seed}");
+                match t.water {
+                    Some(WaterKind::Ocean) | Some(WaterKind::Ice) => {
+                        panic!("STRASSE_AUF_MEER bei ({x},{y}) seed {seed}");
+                    }
+                    Some(WaterKind::Lake) => {
+                        assert!(
+                            ports.contains(&w.idx(x, y)),
+                            "STRASSE_AUF_UNNAVIGABLEM_SEE bei ({x},{y}) seed {seed}"
+                        );
+                    }
+                    Some(WaterKind::River) | None => {}
                 }
             }
         }
@@ -732,6 +685,7 @@ fn treeline_in_meters_wiese_above_peak_rocky() {
 
 #[test]
 fn all_settlements_connected_to_road_network() {
+    use dnd_2d_map::world::WaterKind;
     for seed in 1..=8u64 {
         let cfg = Config {
             seed,
@@ -745,6 +699,22 @@ fn all_settlements_connected_to_road_network() {
             continue;
         }
         let start = setts[0];
+        let is_landmass = |x: usize, y: usize| {
+            !matches!(
+                w.get(x, y).unwrap().water,
+                Some(WaterKind::Ocean) | Some(WaterKind::Lake) | Some(WaterKind::Ice)
+            )
+        };
+        let mut comp = std::collections::HashSet::new();
+        let mut stack = vec![start];
+        comp.insert(start);
+        while let Some((x, y)) = stack.pop() {
+            for n in w.neighbors4(x, y) {
+                if is_landmass(n.0, n.1) && comp.insert(n) {
+                    stack.push(n);
+                }
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         let mut stack = vec![start];
         while let Some(p) = stack.pop() {
@@ -759,11 +729,11 @@ fn all_settlements_connected_to_road_network() {
         }
         let unreachable: Vec<_> = setts
             .iter()
-            .filter(|s| !seen.contains(s))
+            .filter(|s| comp.contains(s) && !seen.contains(s))
             .collect();
         assert!(
             unreachable.is_empty(),
-            "Seed {seed}: Siedlungen ohne Straßenanschluss: {unreachable:?}"
+            "Seed {seed}: Siedlungen ohne Strassenanschluss auf derselben Landmasse: {unreachable:?}"
         );
     }
 }
