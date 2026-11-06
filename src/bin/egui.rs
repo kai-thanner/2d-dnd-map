@@ -996,7 +996,7 @@ impl eframe::App for MapApp {
 
         egui::containers::Panel::left("sidebar").default_size(300.0).show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Karte generieren (2.5D)");
+                ui.heading("Karte generieren");
                 ui.horizontal(|ui| {
                     ui.label("Seed:");
                     ui.add(egui::DragValue::new(&mut self.cfg.seed).range(0..=u64::MAX));
@@ -1070,11 +1070,9 @@ impl eframe::App for MapApp {
                 });
 
                 ui.separator();
-                ui.heading("Ansicht (2.5D)");
+                ui.heading("Ansicht");
                 ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
                 ui.add(egui::Slider::new(&mut self.view.rot_deg, 0.0..=360.0).text("Drehung (°)"));
-                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 10.0..=90.0).text("Kippwinkel (°)"));
-                ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=3.0).text("Höhenfaktor"));
                 ui.label("Mausrad = Zoom an Mausposition, mittlere Maustaste = ziehen, Q/E = drehen um die Mitte.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
@@ -1333,7 +1331,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "dnd-2d-map (2.5D)",
+        "dnd-2d-map",
         options,
         Box::new(|_cc| Ok(Box::new(MapApp::default()) as Box<dyn eframe::App>)),
     )

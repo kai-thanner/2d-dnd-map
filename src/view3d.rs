@@ -15,7 +15,7 @@ impl Default for View3D {
             cell: 14.0,
             pan: (0.0, 0.0),
             rot_deg: 0.0,
-            tilt_deg: 60.0,
+            tilt_deg: 90.0,
             hf: 2.0,
             e_off: 0.0,
             e_scale: 1.0,
