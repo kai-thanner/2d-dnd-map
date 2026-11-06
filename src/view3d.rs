@@ -16,7 +16,7 @@ impl Default for View3D {
             pan: (0.0, 0.0),
             rot_deg: 0.0,
             tilt_deg: 60.0,
-            hf: 2.0,
+            hf: 1.0,
             e_off: 0.0,
             e_scale: 1.0,
         }
@@ -60,6 +60,14 @@ impl View3D {
             cx + tx - e * 0.5 * sa * ca,
             cy + (ty + e * self.hf * ca) / sa,
         )
+    }
+
+    pub fn rotate_at(&mut self, p: (f32, f32), cx: f32, cy: f32, center: (f32, f32), delta_deg: f32) {
+        let (ax, ay) = self.unproject(p, cx, cy, center, self.e_off);
+        self.rot_deg += delta_deg;
+        let sp = self.project(ax, ay, self.e_off, cx, cy, center);
+        self.pan.0 += p.0 - sp.0;
+        self.pan.1 += p.1 - sp.1;
     }
 
     pub fn zoom_at(&mut self, p: (f32, f32), anchor_screen: (f32, f32), center: (f32, f32), factor: f32) {

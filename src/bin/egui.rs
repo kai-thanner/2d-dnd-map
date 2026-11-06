@@ -400,7 +400,12 @@ impl MapApp {
         let w = &self.state.as_ref()?.world;
         let cx = w.width as f32 / 2.0;
         let cy = w.height as f32 / 2.0;
-        let (bx, by) = self.view.unproject(p, cx, cy, center, self.view.e_off);
+        let (mut bx, mut by) = self.view.unproject(p, cx, cy, center, 0.0);
+        if let Some(t0) = w.get(bx as usize, by as usize) {
+            let (rx, ry) = self.view.unproject(p, cx, cy, center, t0.elevation);
+            bx = rx;
+            by = ry;
+        }
         let mut best: Option<((usize, usize), f32)> = None;
         for dy in -2..=2i64 {
             for dx in -2..=2i64 {
@@ -410,7 +415,8 @@ impl MapApp {
                     continue;
                 }
                 let (x, y) = (tx as usize, ty as usize);
-                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, self.view.e_off, cx, cy, center);
+                let e = w.get(x, y).unwrap().elevation;
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
                 let spp = egui::pos2(sp.0, sp.1);
                 let d = spp.distance(egui::pos2(p.0, p.1));
                 if rect.contains(spp) && best.map_or(true, |(_, bd)| d < bd) {
@@ -442,7 +448,8 @@ impl MapApp {
                 if w.get(x, y).unwrap().settlement.is_none() {
                     continue;
                 }
-                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, self.view.e_off, cx, cy, center);
+                let e = w.get(x, y).unwrap().elevation;
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
                 let d = egui::pos2(sp.0, sp.1).distance(click);
                 if best.map_or(true, |(_, bd)| d < bd) {
                     best = Some(((x, y), d));
@@ -543,15 +550,33 @@ impl MapApp {
         let rect = response.rect;
         let center = (rect.center().x, rect.center().y);
 
-        let (middle_down, delta) = ui.input(|i| {
+        let (middle_down, delta, shift) = ui.input(|i| {
             (
                 i.pointer.button_down(egui::PointerButton::Middle),
                 i.pointer.delta(),
+                i.modifiers.shift,
             )
         });
+        let mouse = ui.input(|i| i.pointer.latest_pos());
+        let (mcx, mcy) = self
+            .state
+            .as_ref()
+            .map(|s| (s.world.width as f32 / 2.0, s.world.height as f32 / 2.0))
+            .unwrap_or((0.0, 0.0));
+        let pivot = match mouse {
+            Some(m) if rect.contains(m) => (m.x, m.y),
+            _ => center,
+        };
         if middle_down && response.hovered() {
-            self.view.pan.0 += delta.x;
-            self.view.pan.1 += delta.y;
+            if shift {
+                self.view.pan.0 += delta.x;
+                self.view.pan.1 += delta.y;
+            } else {
+                self.view.tilt_deg = (self.view.tilt_deg - delta.y * 0.25).clamp(0.0, 90.0);
+                if delta.x != 0.0 {
+                    self.view.rotate_at(pivot, mcx, mcy, center, delta.x * 0.25);
+                }
+            }
         }
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll != 0.0 {
@@ -561,9 +586,10 @@ impl MapApp {
                     let factor = (scroll * 0.0016).exp();
                     let anchor = self.tile_at(pp, center, rect).map(|t| {
                         let w = &self.state.as_ref().unwrap().world;
+                        let e = w.get(t.0, t.1).unwrap().elevation;
                         let cx = w.width as f32 / 2.0;
                         let cy = w.height as f32 / 2.0;
-                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, self.view.e_off, cx, cy, center)
+                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, e, cx, cy, center)
                     });
                     match anchor {
                         Some(sp) => self.view.zoom_at(pp, sp, center, factor),
@@ -573,10 +599,16 @@ impl MapApp {
             }
         }
         if ui.input(|i| i.key_pressed(egui::Key::Q)) {
-            self.view.rot_deg -= 6.0;
+            self.view.rotate_at(pivot, mcx, mcy, center, -6.0);
         }
         if ui.input(|i| i.key_pressed(egui::Key::E)) {
-            self.view.rot_deg += 6.0;
+            self.view.rotate_at(pivot, mcx, mcy, center, 6.0);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::ArrowUp)) {
+            self.view.tilt_deg = (self.view.tilt_deg + 6.0).clamp(0.0, 90.0);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::ArrowDown)) {
+            self.view.tilt_deg = (self.view.tilt_deg - 6.0).clamp(0.0, 90.0);
         }
 
         let cell = self.view.cell;
@@ -613,8 +645,8 @@ impl MapApp {
                 }
             }
 
-            let proj = |x: f32, y: f32, _e: f32| {
-                let sp = self.view.project(x, y, self.view.e_off, cx, cy, center);
+            let proj = |x: f32, y: f32, e: f32| {
+                let sp = self.view.project(x, y, e, cx, cy, center);
                 egui::pos2(sp.0, sp.1)
             };
 
@@ -633,13 +665,11 @@ impl MapApp {
                 let mut tiles: Vec<(f32, f32, [egui::Pos2; 4], usize, usize)> = Vec::new();
                 for y in 0..world.height {
                     for x in 0..world.width {
-                        let t = world.get(x, y).unwrap();
-                        let e = t.elevation;
                         let cs = [
-                            proj(x as f32, y as f32, e),
-                            proj(x as f32 + 1.0, y as f32, e),
-                            proj(x as f32 + 1.0, y as f32 + 1.0, e),
-                            proj(x as f32, y as f32 + 1.0, e),
+                            proj(x as f32, y as f32, bilinear_elev(world, x as f32, y as f32)),
+                            proj(x as f32 + 1.0, y as f32, bilinear_elev(world, x as f32 + 1.0, y as f32)),
+                            proj(x as f32 + 1.0, y as f32 + 1.0, bilinear_elev(world, x as f32 + 1.0, y as f32 + 1.0)),
+                            proj(x as f32, y as f32 + 1.0, bilinear_elev(world, x as f32, y as f32 + 1.0)),
                         ];
                         let min_x = cs.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
                         let max_x = cs.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
@@ -1028,9 +1058,8 @@ impl eframe::App for MapApp {
                 ui.heading("Ansicht (2.5D)");
                 ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
                 ui.add(egui::Slider::new(&mut self.view.rot_deg, 0.0..=360.0).text("Drehung (°)"));
-                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 10.0..=90.0).text("Kippwinkel (°)"));
-                ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=3.0).text("Höhenfaktor"));
-                ui.label("Mausrad = Zoom an Mausposition, mittlere Maustaste = ziehen, Q/E = drehen um die Mitte.");
+                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 0.0..=90.0).text("Kippwinkel (°)"));
+                ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Shift + mittlere Maustaste = Karte verschieben. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
                     let e_scale = self.view.e_scale;

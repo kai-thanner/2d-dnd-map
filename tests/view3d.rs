@@ -69,3 +69,23 @@ fn tilt_90_is_top_down() {
         "Bei 90° muss Draufsicht ohne Höhenversatz rauskommen: {p:?}"
     );
 }
+
+#[test]
+fn rotate_keeps_mouse_anchor_fixed() {
+    let mut v = View3D {
+        rot_deg: 10.0,
+        tilt_deg: 50.0,
+        pan: (3.0, -4.0),
+        ..View3D::default()
+    };
+    let center = (700.0, 400.0);
+    let (cx, cy) = (50.0, 25.0);
+    let p = (733.0, 411.0);
+    let (ax, ay) = v.unproject(p, cx, cy, center, v.e_off);
+    v.rotate_at(p, cx, cy, center, 37.0);
+    let sp = v.project(ax, ay, v.e_off, cx, cy, center);
+    assert!(
+        (sp.0 - p.0).abs() < 1e-2 && (sp.1 - p.1).abs() < 1e-2,
+        "Dreh-Anker muss am Mauszeiger bleiben: {sp:?} vs {p:?}"
+    );
+}
