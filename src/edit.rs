@@ -32,6 +32,7 @@ pub enum Edit {
         name: Option<String>,
         population: Option<u32>,
     },
+    SetPort { x: usize, y: usize, port: bool },
     DestroySettlement { x: usize, y: usize },
     BurnForest { x: usize, y: usize, radius: u32 },
     DrainLake { x: usize, y: usize, radius: u32 },
@@ -109,6 +110,7 @@ impl World {
             }
             Edit::AddSettlement { x, y, population, name } => {
                 let near_ocean = self.near_ocean(*x, *y);
+                let has_port = self.near_port_water(*x, *y);
                 if let Some(t) = self.get_mut(*x, *y) {
                     if t.is_passable() && t.settlement.is_none() {
                         let name = name
@@ -117,6 +119,7 @@ impl World {
                         t.settlement = Some(Settlement {
                             name,
                             population: *population,
+                            has_port,
                         });
                     }
                 }
@@ -130,6 +133,13 @@ impl World {
                         if let Some(p) = population {
                             s.population = *p;
                         }
+                    }
+                }
+            }
+            Edit::SetPort { x, y, port } => {
+                if let Some(t) = self.get_mut(*x, *y) {
+                    if let Some(s) = &mut t.settlement {
+                        s.has_port = *port;
                     }
                 }
             }
@@ -219,6 +229,7 @@ impl World {
                         });
                     }
                     rivers::recompute_river_widths(self);
+                    rivers::carve_valleys(self, self.sea_level);
                 }
             }
             Edit::AddPoi { x, y, kind } => {

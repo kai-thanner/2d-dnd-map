@@ -63,16 +63,22 @@ fn ensure_harbors(w: &mut World) {
                 let ocean_n = w
                     .neighbors8(s.0, s.1)
                     .iter()
-                    .filter(|n| w.get(n.0, n.1).unwrap().water == Some(WaterKind::Ocean))
+                    .filter(|n| {
+                        matches!(
+                            w.get(n.0, n.1).unwrap().water,
+                            Some(WaterKind::Ocean) | Some(WaterKind::Lake)
+                        )
+                    })
                     .count();
                 std::cmp::Reverse(ocean_n)
             });
             for s in coastal.iter().take(n_harbors) {
-                if !w.near_ocean(s.0, s.1) {
+                if !w.near_port_water(s.0, s.1) {
                     continue;
                 }
                 let t = w.get_mut(s.0, s.1).unwrap();
                 if let Some(st) = &mut t.settlement {
+                    st.has_port = true;
                     if st.population <= 2000 {
                         st.population = 2500;
                     }
@@ -117,8 +123,13 @@ fn place_range(
         }
         let population = rng.random_range(pop_range.clone());
         let name = names::settlement(rng, population, w.near_ocean(x, y));
+        let has_port = w.near_port_water(x, y);
         let t = w.get_mut(x, y).unwrap();
-        t.settlement = Some(Settlement { name, population });
+        t.settlement = Some(Settlement {
+            name,
+            population,
+            has_port,
+        });
         points.push((x, y));
         placed += 1;
     }

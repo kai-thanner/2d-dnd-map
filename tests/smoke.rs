@@ -386,7 +386,8 @@ fn lakes_have_outflow_river() {
                 let has_outflow = comp.iter().any(|(lx, ly)| {
                     w.neighbors8(*lx, *ly).iter().any(|n| {
                         let nt = w.get(n.0, n.1).unwrap();
-                        nt.water == Some(WaterKind::River)
+                        nt.river
+                            || nt.water == Some(WaterKind::River)
                             || nt.water == Some(WaterKind::Ocean)
                             || nt.elevation < cfg.sea_level
                     })

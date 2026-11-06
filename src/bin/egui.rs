@@ -4,9 +4,38 @@ use dnd_2d_map::gen;
 use dnd_2d_map::palette;
 use dnd_2d_map::rng;
 use dnd_2d_map::save;
-use dnd_2d_map::world::{Biome, Poi, SettlementTier, WaterKind};
+use dnd_2d_map::view3d::View3D;
+use dnd_2d_map::world::{Biome, Poi, SettlementTier, WaterKind, World};
 use eframe::egui;
 use rand::rngs::StdRng;
+
+const SUB: usize = 3;
+
+fn bilinear_elev(w: &World, fx: f32, fy: f32) -> f32 {
+    let x0 = (fx.floor() as usize).min(w.width - 1);
+    let y0 = (fy.floor() as usize).min(w.height - 1);
+    let x1 = (x0 + 1).min(w.width - 1);
+    let y1 = (y0 + 1).min(w.height - 1);
+    let tx = (fx - x0 as f32).clamp(0.0, 1.0);
+    let ty = (fy - y0 as f32).clamp(0.0, 1.0);
+    let e00 = w.get(x0, y0).unwrap().elevation;
+    let e10 = w.get(x1, y0).unwrap().elevation;
+    let e01 = w.get(x0, y1).unwrap().elevation;
+    let e11 = w.get(x1, y1).unwrap().elevation;
+    let e0 = e00 + (e10 - e00) * tx;
+    let e1 = e01 + (e11 - e01) * tx;
+    e0 + (e1 - e0) * ty
+}
+
+fn is_edge_tile(w: &World, x: usize, y: usize) -> bool {
+    let t = w.get(x, y).unwrap();
+    let eb = t.effective_biome();
+    let ew = t.water;
+    w.neighbors4(x, y).iter().any(|n| {
+        let nt = w.get(n.0, n.1).unwrap();
+        nt.effective_biome() != eb || nt.water != ew
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -61,7 +90,7 @@ impl Tool {
     fn label(self) -> &'static str {
         match self {
             Tool::Select => "Auswählen / Info (Klick pinnt Kachel, ESC wählt ab)",
-            Tool::AddSettlement => "Siedlung setzen (Linksklick, Default 150 Ew. – danach pinnen & Einwohner ändern)",
+            Tool::AddSettlement => "Siedlung setzen (Linksklick, Default 150 Ew.)",
             Tool::DestroySettlement => "Siedlung zerstören (Linksklick)",
             Tool::AddDungeon => "Dungeon setzen (Linksklick)",
             Tool::RemovePoi => "POI entfernen (Linksklick)",
@@ -73,61 +102,6 @@ impl Tool {
             Tool::DrainLake => "See/Fluss austrocknen (Linksklick)",
             Tool::Flood => "See anlegen (Land fluten, Linksklick + Radius)",
         }
-    }
-}
-
-struct View3D {
-    cell: f32,
-    pan: egui::Vec2,
-    rot_deg: f32,
-    tilt_deg: f32,
-    hf: f32,
-    e_off: f32,
-    e_scale: f32,
-}
-
-impl Default for View3D {
-    fn default() -> Self {
-        Self {
-            cell: 14.0,
-            pan: egui::vec2(0.0, 0.0),
-            rot_deg: 0.0,
-            tilt_deg: 60.0,
-            hf: 2.0,
-            e_off: 0.0,
-            e_scale: 1.0,
-        }
-    }
-}
-
-impl View3D {
-    fn disp_e(&self, e: f32) -> f32 {
-        ((e - self.e_off) * self.e_scale).clamp(0.0, 1.5)
-    }
-
-    fn project(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32, center: egui::Pos2) -> egui::Pos2 {
-        let e = self.disp_e(e);
-        let a = self.tilt_deg.to_radians();
-        let (sa, ca) = (a.sin(), a.cos());
-        let dx = x - cx;
-        let dy = y - cy;
-        let tx = dx + e * 0.5 * sa * ca;
-        let ty = dy * sa - e * self.hf * ca;
-        let r = self.rot_deg.to_radians();
-        let (s, c) = (r.sin(), r.cos());
-        let rx = tx * c - ty * s;
-        let ry = tx * s + ty * c;
-        center + self.pan + egui::vec2(rx * self.cell, ry * self.cell)
-    }
-
-    fn unproject(&self, p: egui::Pos2, cx: f32, cy: f32, center: egui::Pos2) -> (f32, f32) {
-        let v = (p - center - self.pan) / self.cell;
-        let r = self.rot_deg.to_radians();
-        let (s, c) = (r.sin(), r.cos());
-        let tx = v.x * c + v.y * s;
-        let ty = -v.x * s + v.y * c;
-        let sa = (self.tilt_deg.to_radians().sin()).max(0.17);
-        (cx + tx, cy + ty / sa)
     }
 }
 
@@ -143,7 +117,6 @@ struct MapApp {
     hover: Option<(usize, usize)>,
     selected: Option<(usize, usize)>,
     selected_screen: Option<egui::Pos2>,
-    edit_for: Option<(usize, usize)>,
     edit_name: String,
     edit_pop: u32,
     map_name: Option<String>,
@@ -170,7 +143,6 @@ impl Default for MapApp {
             hover: None,
             selected: None,
             selected_screen: None,
-            edit_for: None,
             edit_name: String::new(),
             edit_pop: 0,
             map_name: None,
@@ -241,8 +213,10 @@ impl MapApp {
                 if p.extension().map_or(false, |x| x == "json") {
                     if let Ok((_cfg, st)) = save::load(&p) {
                         let name = p.file_stem().unwrap().to_string_lossy().to_string();
-                        self.load_entries
-                            .push((format!("{name}  (Revision {})", st.revision), p.to_string_lossy().to_string()));
+                        self.load_entries.push((
+                            format!("{name}  (Revision {})", st.revision),
+                            p.to_string_lossy().to_string(),
+                        ));
                     }
                 }
             }
@@ -280,7 +254,8 @@ impl MapApp {
     }
 
     fn start_game(&mut self) {
-        self.status = "„Spiel starten“ kommt in Phase 2 (Server/Client mit Erzähler & Spielern).".to_string();
+        self.status =
+            "„Spiel starten“ kommt in Phase 2 (Server/Client mit Erzähler & Spielern).".to_string();
     }
 
     fn undo(&mut self) {
@@ -301,10 +276,9 @@ impl MapApp {
         let data = sel.and_then(|(x, y)| {
             self.state
                 .as_ref()
-                .map(|s| (x, y, s.world.get(x, y).unwrap().settlement.clone()))
+                .map(|s| s.world.get(x, y).unwrap().settlement.clone())
         });
-        self.edit_for = sel;
-        if let Some((_, _, Some(s))) = data {
+        if let Some(Some(s)) = data {
             self.edit_name = s.name;
             self.edit_pop = s.population;
         }
@@ -328,10 +302,14 @@ impl MapApp {
                 let state = self.state.as_mut().unwrap();
                 state.apply(e, &mut self.rng);
                 self.dirty = true;
-                self.status = format!("Entfernt an ({}, {}) – Revision {}", pos.0, pos.1, state.revision);
+                self.status =
+                    format!("Entfernt an ({}, {}) – Revision {}", pos.0, pos.1, state.revision);
             }
             None => {
-                self.status = format!("An ({}, {}) ist kein POI / keine Siedlung zum Entfernen.", pos.0, pos.1)
+                self.status = format!(
+                    "An ({}, {}) ist kein POI / keine Siedlung zum Entfernen.",
+                    pos.0, pos.1
+                )
             }
         }
     }
@@ -343,7 +321,15 @@ impl MapApp {
         }
         if self.tool == Tool::AddRoad && self.road_from.is_some() {
             let from = self.road_from.take().unwrap();
-            let before = self.state.as_ref().unwrap().world.tiles.iter().filter(|t| t.road).count();
+            let before = self
+                .state
+                .as_ref()
+                .unwrap()
+                .world
+                .tiles
+                .iter()
+                .filter(|t| t.road)
+                .count();
             let state = self.state.as_mut().unwrap();
             state.apply(Edit::AddRoad { from, to: pos }, &mut self.rng);
             self.dirty = true;
@@ -377,7 +363,8 @@ impl MapApp {
             }),
             Tool::AddRoad => {
                 self.road_from = Some(pos);
-                self.status = format!("Straßen-Start bei ({}, {}) – jetzt Ziel anklicken.", pos.0, pos.1);
+                self.status =
+                    format!("Straßen-Start bei ({}, {}) – jetzt Ziel anklicken.", pos.0, pos.1);
                 None
             }
             Tool::AddRiver => Some(Edit::AddRiver { x: pos.0, y: pos.1 }),
@@ -405,28 +392,67 @@ impl MapApp {
         }
     }
 
-    fn tile_at(&self, p: egui::Pos2, center: egui::Pos2, rect: egui::Rect) -> Option<(usize, usize)> {
+    fn tile_at(&self, p: (f32, f32), center: (f32, f32), rect: egui::Rect) -> Option<(usize, usize)> {
         let w = &self.state.as_ref()?.world;
         let cx = w.width as f32 / 2.0;
         let cy = w.height as f32 / 2.0;
-        let (bx, by) = self.view.unproject(p, cx, cy, center);
+        let (mut bx, mut by) = self.view.unproject(p, cx, cy, center, 0.0);
+        if let Some(t0) = w.get(bx as usize, by as usize) {
+            let (rx, ry) = self.view.unproject(p, cx, cy, center, t0.elevation);
+            bx = rx;
+            by = ry;
+        }
         let mut best: Option<((usize, usize), f32)> = None;
         for dy in -2..=2i64 {
             for dx in -2..=2i64 {
-                let (tx, ty) = (bx + dx as f32, by + dy as f32);
+                let tx = bx + dx as f32;
+                let ty = by + dy as f32;
                 if tx < 0.0 || ty < 0.0 || tx >= w.width as f32 || ty >= w.height as f32 {
                     continue;
                 }
                 let (x, y) = (tx as usize, ty as usize);
                 let e = w.get(x, y).unwrap().elevation;
                 let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
-                let d = sp.distance(p);
-                if rect.contains(sp) && best.map_or(true, |(_, bd)| d < bd) {
+                let spp = egui::pos2(sp.0, sp.1);
+                let d = spp.distance(egui::pos2(p.0, p.1));
+                if rect.contains(spp) && best.map_or(true, |(_, bd)| d < bd) {
                     best = Some(((x, y), d));
                 }
             }
         }
         best.filter(|(_, d)| *d < self.view.cell * 0.8).map(|(t, _)| t)
+    }
+
+    fn snap_to_settlement(
+        &self,
+        pos: (usize, usize),
+        click: egui::Pos2,
+        center: (f32, f32),
+    ) -> Option<(usize, usize)> {
+        let w = &self.state.as_ref()?.world;
+        let cx = w.width as f32 / 2.0;
+        let cy = w.height as f32 / 2.0;
+        let mut best: Option<((usize, usize), f32)> = None;
+        for dy in -2..=2i64 {
+            for dx in -2..=2i64 {
+                let x = pos.0 as i64 + dx;
+                let y = pos.1 as i64 + dy;
+                if x < 0 || y < 0 || x >= w.width as i64 || y >= w.height as i64 {
+                    continue;
+                }
+                let (x, y) = (x as usize, y as usize);
+                if w.get(x, y).unwrap().settlement.is_none() {
+                    continue;
+                }
+                let e = w.get(x, y).unwrap().elevation;
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
+                let d = egui::pos2(sp.0, sp.1).distance(click);
+                if best.map_or(true, |(_, bd)| d < bd) {
+                    best = Some(((x, y), d));
+                }
+            }
+        }
+        best.filter(|(_, d)| *d < self.view.cell * 1.6).map(|(t, _)| t)
     }
 
     fn draw_map(&mut self, ui: &mut egui::Ui) {
@@ -439,7 +465,7 @@ impl MapApp {
         let avail = ui.available_rect_before_wrap();
         let response = ui.allocate_rect(avail, egui::Sense::click_and_drag());
         let rect = response.rect;
-        let center = rect.center();
+        let center = (rect.center().x, rect.center().y);
 
         let (middle_down, delta) = ui.input(|i| {
             (
@@ -448,26 +474,25 @@ impl MapApp {
             )
         });
         if middle_down && response.hovered() {
-            self.view.pan += delta;
+            self.view.pan.0 += delta.x;
+            self.view.pan.1 += delta.y;
         }
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll != 0.0 {
             if let Some(p) = ui.input(|i| i.pointer.latest_pos()) {
                 if rect.contains(p) {
+                    let pp = (p.x, p.y);
                     let factor = (scroll * 0.0016).exp();
-                    let new_cell = (self.view.cell * factor).clamp(4.0, 40.0);
-                    if let Some(t) = self.tile_at(p, center, rect) {
+                    let anchor = self.tile_at(pp, center, rect).map(|t| {
                         let w = &self.state.as_ref().unwrap().world;
                         let e = w.get(t.0, t.1).unwrap().elevation;
                         let cx = w.width as f32 / 2.0;
                         let cy = w.height as f32 / 2.0;
-                        let sp = self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, e, cx, cy, center);
-                        self.view.pan += p - sp;
-                    }
-                    self.view.cell = new_cell;
-                    if !self.view.pan.is_finite() || !self.view.cell.is_finite() {
-                        self.view.pan = egui::vec2(0.0, 0.0);
-                        self.view.cell = 14.0;
+                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, e, cx, cy, center)
+                    });
+                    match anchor {
+                        Some(sp) => self.view.zoom_at(pp, sp, center, factor),
+                        None => self.view.cell = (self.view.cell * factor).clamp(4.0, 40.0),
                     }
                 }
             }
@@ -482,6 +507,7 @@ impl MapApp {
         let cell = self.view.cell;
         let road_from = self.road_from;
         let selected = self.selected;
+        let ca = self.view.tilt_deg.to_radians().cos();
 
         let mut hover_cell = None;
         let mut primary_cell = None;
@@ -496,11 +522,11 @@ impl MapApp {
 
             if let Some(p) = ui.input(|i| i.pointer.latest_pos()) {
                 if rect.contains(p) {
-                    hover_cell = self.tile_at(p, center, rect);
+                    hover_cell = self.tile_at((p.x, p.y), center, rect);
                 }
             }
             if let Some(p) = response.interact_pointer_pos() {
-                let c = self.tile_at(p, center, rect);
+                let c = self.tile_at((p.x, p.y), center, rect);
                 if response.clicked_by(egui::PointerButton::Primary) {
                     primary_cell = c;
                     primary_screen = Some(p);
@@ -510,20 +536,71 @@ impl MapApp {
                 }
             }
 
+            let proj = |x: f32, y: f32, e: f32| {
+                let sp = self.view.project(x, y, e, cx, cy, center);
+                egui::pos2(sp.0, sp.1)
+            };
+
             for y in 0..world.height {
                 for x in 0..world.width {
                     let t = world.get(x, y).unwrap();
                     let e = t.elevation;
-                    let sp = self.view.project(x as f32, y as f32, e, cx, cy, center);
-                    if sp.x < rect.min.x - cell || sp.y < rect.min.y - cell
-                        || sp.x > rect.max.x + cell || sp.y > rect.max.y + cell
+                    let sp = proj(x as f32, y as f32, e);
+                    if sp.x < rect.min.x - cell
+                        || sp.y < rect.min.y - cell
+                        || sp.x > rect.max.x + cell
+                        || sp.y > rect.max.y + cell
                     {
                         continue;
                     }
-                    let cell_rect = egui::Rect::from_min_size(sp, egui::vec2(cell, cell));
-                    let (r, g, b) =
-                        palette::shade_rgb(world, x, y, palette::biome_rgb(t.effective_biome()));
-                    painter.rect_filled(cell_rect, 0.0, egui::Color32::from_rgb(r, g, b));
+                    if ca > 0.08 {
+                        let bp = proj(x as f32, y as f32, self.view.e_off);
+                        let side =
+                            egui::Rect::from_two_pos(bp, egui::pos2(sp.x + cell, sp.y + cell));
+                        let (r, g, b) = palette::biome_rgb(t.effective_biome());
+                        painter.rect_filled(
+                            side,
+                            0.0,
+                            egui::Color32::from_rgb(
+                                (r as f32 * 0.45) as u8,
+                                (g as f32 * 0.45) as u8,
+                                (b as f32 * 0.45) as u8,
+                            ),
+                        );
+                    }
+                    if is_edge_tile(world, x, y) {
+                        let sz = cell / SUB as f32 + 0.5;
+                        for sy in 0..SUB {
+                            for sx in 0..SUB {
+                                let fx = x as f32 + (sx as f32 + 0.5) / SUB as f32;
+                                let fy = y as f32 + (sy as f32 + 0.5) / SUB as f32;
+                                let e_sub = bilinear_elev(world, fx, fy);
+                                let sp_sub = proj(fx, fy, e_sub);
+                                let (r, g, b) = if e_sub < world.sea_level {
+                                    palette::biome_rgb(Biome::Ocean)
+                                } else {
+                                    palette::shade_rgb(world, x, y, palette::biome_rgb(t.biome))
+                                };
+                                painter.rect_filled(
+                                    egui::Rect::from_min_size(sp_sub, egui::vec2(sz, sz)),
+                                    0.0,
+                                    egui::Color32::from_rgb(r, g, b),
+                                );
+                            }
+                        }
+                    } else {
+                        let (r, g, b) = palette::shade_rgb(
+                            world,
+                            x,
+                            y,
+                            palette::biome_rgb(t.effective_biome()),
+                        );
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(sp, egui::vec2(cell, cell)),
+                            0.0,
+                            egui::Color32::from_rgb(r, g, b),
+                        );
+                    }
                 }
             }
 
@@ -535,25 +612,11 @@ impl MapApp {
                         continue;
                     }
                     let t = world.get(x, y).unwrap();
-                    let c0 = self.view.project(
-                        x as f32 + 0.5,
-                        y as f32 + 0.5,
-                        t.elevation,
-                        cx,
-                        cy,
-                        center,
-                    );
+                    let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
                     for (nx, ny) in world.neighbors8(x, y) {
-                        if world.get(nx, ny).unwrap().road {
-                            let nt = world.get(nx, ny).unwrap();
-                            let c1 = self.view.project(
-                                nx as f32 + 0.5,
-                                ny as f32 + 0.5,
-                                nt.elevation,
-                                cx,
-                                cy,
-                                center,
-                            );
+                        let nt = world.get(nx, ny).unwrap();
+                        if nt.road {
+                            let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
                             painter.line_segment([c0, c1], road_stroke);
                         }
                     }
@@ -573,25 +636,11 @@ impl MapApp {
                         (cell * 0.14 * wdt).clamp(1.5, cell * 0.9),
                         egui::Color32::from_rgb(rr, rg, rb),
                     );
-                    let c0 = self.view.project(
-                        x as f32 + 0.5,
-                        y as f32 + 0.5,
-                        t.elevation,
-                        cx,
-                        cy,
-                        center,
-                    );
+                    let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
                     for (nx, ny) in world.neighbors8(x, y) {
                         let nt = world.get(nx, ny).unwrap();
                         if nt.water == Some(WaterKind::River) || nt.river {
-                            let c1 = self.view.project(
-                                nx as f32 + 0.5,
-                                ny as f32 + 0.5,
-                                nt.elevation,
-                                cx,
-                                cy,
-                                center,
-                            );
+                            let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
                             painter.line_segment([c0, c1], stroke);
                         }
                     }
@@ -601,14 +650,7 @@ impl MapApp {
             for y in 0..world.height {
                 for x in 0..world.width {
                     let t = world.get(x, y).unwrap();
-                    let c0 = self.view.project(
-                        x as f32 + 0.5,
-                        y as f32 + 0.5,
-                        t.elevation,
-                        cx,
-                        cy,
-                        center,
-                    );
+                    let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
                     if let Some(tier) = world.settlement_tier(x, y) {
                         let (col, rad) = match tier {
                             SettlementTier::Gehoeft => (egui::Color32::from_rgb(170, 170, 170), 0.22),
@@ -619,11 +661,11 @@ impl MapApp {
                             SettlementTier::Hafenstadt => (egui::Color32::from_rgb(90, 205, 235), 0.42),
                         };
                         let r = (cell * rad).max(2.0);
-                        painter.circle_filled(c0, r, col);
-                        if world.near_water(x, y) {
+                        let has_port = t.settlement.as_ref().map_or(false, |s| s.has_port);
+                        if has_port {
                             painter.circle_filled(c0, r + 2.5, egui::Color32::from_rgb(40, 110, 220));
-                            painter.circle_filled(c0, r, col);
                         }
+                        painter.circle_filled(c0, r, col);
                     } else if let Some(p) = &t.poi {
                         let (ch, col) = match p {
                             Poi::Dungeon { .. } => ("D", egui::Color32::from_rgb(235, 70, 70)),
@@ -643,9 +685,12 @@ impl MapApp {
 
             let mark = |pos: (usize, usize), col: egui::Color32| {
                 let t = world.get(pos.0, pos.1).unwrap();
-                let sp = self.view.project(pos.0 as f32, pos.1 as f32, t.elevation, cx, cy, center);
-                let r = egui::Rect::from_min_size(sp, egui::vec2(cell, cell));
-                painter.rect_filled(r, 0.0, col);
+                let sp = proj(pos.0 as f32, pos.1 as f32, t.elevation);
+                painter.rect_filled(
+                    egui::Rect::from_min_size(sp, egui::vec2(cell, cell)),
+                    0.0,
+                    col,
+                );
             };
             if let Some(pos) = road_from {
                 mark(pos, egui::Color32::from_rgba_premultiplied(255, 60, 60, 110));
@@ -657,18 +702,21 @@ impl MapApp {
                 mark(pos, egui::Color32::from_white_alpha(70));
             }
 
-            let n0 = self.view.project(cx, cy, 0.0, cx, cy, center);
-            let n1 = self.view.project(cx, cy - 1.0, 0.0, cx, cy, center);
+            let n0 = proj(cx, cy, 0.0);
+            let n1 = proj(cx, cy - 1.0, 0.0);
             let mut nd = n1 - n0;
             if nd.length() > 0.001 {
                 nd = nd.normalized();
             }
             let anchor = rect.min + egui::vec2(rect.width() - 56.0, 10.0);
-            let nc = anchor + egui::vec2(20.0, 20.0);
-            painter.circle_filled(nc, 17.0, egui::Color32::from_white_alpha(210));
-            painter.line_segment([nc - nd * 11.0, nc + nd * 8.0], egui::Stroke::new(2.5, egui::Color32::BLACK));
+            let nctr = anchor + egui::vec2(20.0, 20.0);
+            painter.circle_filled(nctr, 17.0, egui::Color32::from_white_alpha(210));
+            painter.line_segment(
+                [nctr - nd * 11.0, nctr + nd * 8.0],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
             painter.text(
-                nc + egui::vec2(0.0, 13.0),
+                nctr + egui::vec2(0.0, 13.0),
                 egui::Align2::CENTER_CENTER,
                 "N",
                 egui::FontId::proportional(11.0),
@@ -681,6 +729,13 @@ impl MapApp {
             self.remove_at(pos);
         }
         if let Some(pos) = primary_cell {
+            let pos = match (
+                primary_screen,
+                self.snap_to_settlement(pos, primary_screen.unwrap_or(egui::pos2(0.0, 0.0)), center),
+            ) {
+                (Some(_click), Some(s)) if self.tool == Tool::Select => s,
+                _ => pos,
+            };
             if self.tool == Tool::Select {
                 self.selected = Some(pos);
                 self.selected_screen = primary_screen;
@@ -759,6 +814,8 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.dry_south, 0.0..=1.0).text("Trockenheit Süden (Wüste)"));
                 ui.add(egui::Slider::new(&mut self.cfg.river_amount, 0.0..=2.0).text("Flussmenge"));
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
+                ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Höhe (m)"));
+                ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=4000.0).text("Baumgrenze (m)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.lapse_per_unit, 0.0..=100.0).text("Höhen-Lapse"));
@@ -788,7 +845,7 @@ impl eframe::App for MapApp {
 
                 ui.separator();
                 ui.heading("Werkzeuge");
-                ui.label("Linksklick = Werkzeug anwenden, Rechtsklick = POI/Siedlung entfernen.");
+                ui.label("Linksklick = Werkzeug, Rechtsklick = POI/Siedlung entfernen. Klick snapt an Siedlungen.");
                 for t in TOOLS {
                     ui.radio_value(&mut self.tool, t, t.label());
                 }
@@ -817,7 +874,7 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.view.rot_deg, 0.0..=360.0).text("Drehung (°)"));
                 ui.add(egui::Slider::new(&mut self.view.tilt_deg, 10.0..=90.0).text("Kippwinkel (°)"));
                 ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=3.0).text("Höhenfaktor"));
-                ui.label("Mausrad = Zoom an Mausposition, mittlere Maustaste = ziehen, Q/E = drehen.");
+                ui.label("Mausrad = Zoom an Mausposition, mittlere Maustaste = ziehen, Q/E = drehen um die Mitte.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
                     let e_scale = self.view.e_scale;
@@ -858,19 +915,25 @@ impl eframe::App for MapApp {
                 if let Some((hx, hy, t, tier)) = info {
                     ui.label(format!("Pos: ({hx}, {hy})"));
                     ui.label(format!(
-                        "Biom: {}   Temp: {:.1} °C",
+                        "Biom: {}   Temp: {:.1} °C   Höhe: {:.0} m",
                         t.effective_biome(),
-                        t.temperature
+                        t.temperature,
+                        (t.elevation - self.cfg.sea_level).max(0.0) * self.cfg.max_elevation_m
                     ));
                     if t.is_water() {
-                        ui.label(format!("Wasser-Layer: {:?} – darunter Land: {}", t.water, t.biome));
+                        ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
                     }
-                    ui.label(format!("Höhe: {:.2}   Feuchte: {:.2}", t.elevation, t.moisture));
-                    ui.label(format!("Straße: {}   Fluss: {} (Breite {})", t.road, t.river, t.river_width));
+                    ui.label(format!(
+                        "Feuchte: {:.2}   Straße: {}   Fluss: {} (Breite {})",
+                        t.moisture, t.road, t.river, t.river_width
+                    ));
                     if let Some(s) = &t.settlement {
                         let tier_name = tier.map(|t| t.name()).unwrap_or("?");
-                        let hafen = if self.state.as_ref().unwrap().world.near_water(hx, hy) { " [Hafen]" } else { "" };
-                        ui.label(format!("Siedlung: {} – {} ({} Einwohner){hafen}", s.name, tier_name, s.population));
+                        let hafen = if s.has_port { " [Hafen]" } else { "" };
+                        ui.label(format!(
+                            "Siedlung: {} – {} ({} Einwohner){hafen}",
+                            s.name, tier_name, s.population
+                        ));
                     }
                     if let Some(p) = &t.poi {
                         ui.label(format!("POI: {p:?}"));
@@ -911,17 +974,18 @@ impl eframe::App for MapApp {
                             .map(|t| (t.clone(), st.world.settlement_tier(sel.0, sel.1)))
                     });
                     if let Some((t, tier)) = info {
-                        ui.label(format!("Biom: {}   Temp: {:.1} °C", t.effective_biome(), t.temperature));
+                        ui.label(format!(
+                            "Biom: {}   Temp: {:.1} °C   Höhe: {:.0} m",
+                            t.effective_biome(),
+                            t.temperature,
+                            (t.elevation - self.cfg.sea_level).max(0.0) * self.cfg.max_elevation_m
+                        ));
                         if t.is_water() {
                             ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
                         }
-                        ui.label(format!("Höhe: {:.3}   Feuchte: {:.2}", t.elevation, t.moisture));
                         ui.label(format!(
-                            "Straße: {}   Fluss: {} (Breite {})   POI: {}",
-                            t.road,
-                            t.river,
-                            t.river_width,
-                            t.poi.is_some()
+                            "Feuchte: {:.2}   Straße: {}   Fluss: {} (Breite {})",
+                            t.moisture, t.road, t.river, t.river_width
                         ));
                         if let Some(s) = &t.settlement {
                             ui.label(format!(
@@ -950,7 +1014,32 @@ impl eframe::App for MapApp {
                                     &mut self.rng,
                                 );
                                 self.dirty = true;
-                                self.status = format!("Siedlung aktualisiert – Revision {}", state.revision);
+                                self.status =
+                                    format!("Siedlung aktualisiert – Revision {}", state.revision);
+                            }
+                            let near_water = self
+                                .state
+                                .as_ref()
+                                .map_or(false, |st| st.world.near_water(sel.0, sel.1));
+                            if near_water {
+                                let mut port = s.has_port;
+                                if ui.checkbox(&mut port, "Hafen").changed() {
+                                    let state = self.state.as_mut().unwrap();
+                                    state.apply(
+                                        Edit::SetPort {
+                                            x: sel.0,
+                                            y: sel.1,
+                                            port,
+                                        },
+                                        &mut self.rng,
+                                    );
+                                    self.dirty = true;
+                                    self.status = format!(
+                                        "Hafen {} – Revision {}",
+                                        if port { "an" } else { "aus" },
+                                        state.revision
+                                    );
+                                }
                             }
                         }
                         if let Some(p) = &t.poi {

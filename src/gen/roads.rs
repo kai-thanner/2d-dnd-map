@@ -76,7 +76,13 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
     );
     let mut ports: HashSet<usize> = HashSet::new();
     for (sx, sy) in w.settlements() {
-        if w.near_water(sx, sy) {
+        let has_port = w
+            .get(sx, sy)
+            .unwrap()
+            .settlement
+            .as_ref()
+            .map_or(false, |s| s.has_port);
+        if has_port {
             ports.insert(w.idx(sx, sy));
             for n in w.neighbors8(sx, sy) {
                 ports.insert(w.idx(n.0, n.1));

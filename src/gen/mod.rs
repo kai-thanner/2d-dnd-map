@@ -22,9 +22,10 @@ pub fn generate(cfg: &Config) -> World {
     rivers::carve(&mut w, cfg);
     lakes::fill(&mut w, cfg);
     biomes::assign(&mut w, cfg);
+    rivers::recompute_river_widths(&mut w);
+    rivers::carve_valleys(&mut w, cfg.sea_level);
     settlements::place(&mut w, cfg, &mut rng);
     roads::connect(&mut w);
     pois::place(&mut w, cfg, &mut rng);
-    rivers::recompute_river_widths(&mut w);
     w
 }

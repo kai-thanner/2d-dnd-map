@@ -11,10 +11,13 @@ pub fn assign(w: &mut World, cfg: &Config) {
             let h = t.elevation - cfg.sea_level;
             let temp = t.temperature;
             let river = t.river;
+            let h_m = h * cfg.max_elevation_m;
             let land = if temp <= cfg.climate.snow_temp {
                 Biome::Snow
             } else if h >= 0.34 {
                 Biome::Mountain
+            } else if h_m > cfg.treeline_m {
+                Biome::Rock
             } else if h >= 0.22 {
                 Biome::Rock
             } else {

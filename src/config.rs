@@ -14,7 +14,7 @@ impl Default for Climate {
         Self {
             south_temp: 28.0,
             north_temp: -6.0,
-            lapse_per_unit: 55.0,
+            lapse_per_unit: 45.0,
             snow_temp: 0.0,
         }
     }
@@ -28,6 +28,14 @@ fn default_river_amount() -> f32 {
     0.5
 }
 
+fn default_max_elevation_m() -> f32 {
+    3000.0
+}
+
+fn default_treeline_m() -> f32 {
+    1700.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub seed: u64,
@@ -39,6 +47,10 @@ pub struct Config {
     pub dry_south: f32,
     #[serde(default = "default_river_amount")]
     pub river_amount: f32,
+    #[serde(default = "default_max_elevation_m")]
+    pub max_elevation_m: f32,
+    #[serde(default = "default_treeline_m")]
+    pub treeline_m: f32,
     pub settlement_density: f32,
     pub climate: Climate,
 }
@@ -53,6 +65,8 @@ impl Default for Config {
             moisture_scale: 0.6,
             dry_south: default_dry_south(),
             river_amount: default_river_amount(),
+            max_elevation_m: default_max_elevation_m(),
+            treeline_m: default_treeline_m(),
             settlement_density: 0.5,
             climate: Climate::default(),
         }
