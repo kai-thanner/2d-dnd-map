@@ -165,9 +165,8 @@ impl MapApp {
     fn generate(&mut self) {
         let world = gen::generate(&self.cfg);
         let sea = self.cfg.sea_level;
-        let max_e = world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
         self.view.e_off = sea;
-        self.view.e_scale = (self.cfg.max_elevation_m / TILE_SIZE_M) / (max_e - sea).max(0.01);
+        self.view.e_scale = self.cfg.max_elevation_m / TILE_SIZE_M;
         self.state = Some(GameState::new(world));
         self.rng = rng::edit_rng(self.cfg.seed);
         self.road_from = None;
@@ -244,9 +243,8 @@ impl MapApp {
                 self.selected = None;
                 let rev = state.revision;
                 let sea = self.cfg.sea_level;
-                let max_e = state.world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
                 self.view.e_off = sea;
-                self.view.e_scale = (self.cfg.max_elevation_m / TILE_SIZE_M) / (max_e - sea).max(0.01);
+                self.view.e_scale = self.cfg.max_elevation_m / TILE_SIZE_M;
                 self.state = Some(state);
                 self.file_path = path.to_string();
                 self.map_name = p.file_stem().map(|s| s.to_string_lossy().to_string());

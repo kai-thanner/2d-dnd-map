@@ -89,3 +89,19 @@ fn rotate_keeps_mouse_anchor_fixed() {
         "Dreh-Anker muss am Mauszeiger bleiben: {sp:?} vs {p:?}"
     );
 }
+
+#[test]
+fn disp_e_matches_dimension_model() {
+    // sea_level = 0.5, max Berghoehe = 6000 m, 1 Kachel = 1000 m -> e_scale = 6 Kacheln
+    let v = View3D {
+        e_off: 0.5,
+        e_scale: 6.0,
+        ..View3D::default()
+    };
+    assert!((v.disp_e(1.0) - 6.0).abs() < 1e-4, "Gipfel = 6 Kacheln ueber Wasser");
+    assert!(v.disp_e(0.5).abs() < 1e-6, "Wasserspiegel = 0");
+    assert!(
+        (v.disp_e(0.0) + 3.0).abs() < 1e-4,
+        "max. Wassertiefe = sea_level x max. Berghoehe = 3 Kacheln"
+    );
+}
