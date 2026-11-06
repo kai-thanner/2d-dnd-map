@@ -126,6 +126,8 @@ struct MapApp {
     load_open: bool,
     load_entries: Vec<(String, String)>,
     load_warn: Option<String>,
+    tex: Option<egui::TextureHandle>,
+    tex_key: (u64, usize, usize, u64),
     status: String,
 }
 
@@ -152,6 +154,8 @@ impl Default for MapApp {
             load_open: false,
             load_entries: Vec::new(),
             load_warn: None,
+            tex: None,
+            tex_key: (u64::MAX, 0, 0, 0),
             status: "Bereit – Werte links einstellen und „Generieren“ drücken.".to_string(),
         }
     }
@@ -455,6 +459,79 @@ impl MapApp {
         best.filter(|(_, d)| *d < self.view.cell * 1.6).map(|(t, _)| t)
     }
 
+    fn ensure_texture(&mut self, ctx: &egui::Context) {
+        let Some(state) = &self.state else { return };
+        let key = (state.revision, state.world.width, state.world.height, self.cfg.seed);
+        if key == self.tex_key && self.tex.is_some() {
+            return;
+        }
+        const TS: usize = 2;
+        let img = {
+            let w = &state.world;
+            let iw = w.width * TS;
+            let ih = w.height * TS;
+            let mut px = vec![egui::Color32::BLACK; iw * ih];
+            for py in 0..ih {
+                for pxx in 0..iw {
+                    let fx = pxx as f32 / TS as f32;
+                    let fy = py as f32 / TS as f32;
+                    let e_sub = bilinear_elev(w, fx, fy);
+                    let tx = (fx.floor() as usize).min(w.width - 1);
+                    let ty = (fy.floor() as usize).min(w.height - 1);
+                    let t = w.get(tx, ty).unwrap();
+                    let (r, g, b) = if e_sub < w.sea_level {
+                        palette::shade_rgb(w, tx, ty, palette::biome_rgb(Biome::Ocean))
+                    } else if t.water == Some(WaterKind::River) || t.river {
+                        palette::shade_rgb(w, tx, ty, palette::biome_rgb(Biome::River))
+                    } else if t.road {
+                        (160, 120, 70)
+                    } else {
+                        palette::shade_rgb(w, tx, ty, palette::biome_rgb(t.biome))
+                    };
+                    px[py * iw + pxx] = egui::Color32::from_rgb(r, g, b);
+                }
+            }
+            for (sx, sy) in w.settlements() {
+                let t = w.get(sx, sy).unwrap();
+                let tier = w.settlement_tier(sx, sy).unwrap();
+                let (col, rad) = match tier {
+                    SettlementTier::Gehoeft => (egui::Color32::from_rgb(170, 170, 170), 0.22),
+                    SettlementTier::Dorf => (egui::Color32::from_rgb(255, 200, 120), 0.28),
+                    SettlementTier::Kleinstadt => (egui::Color32::from_rgb(255, 230, 120), 0.32),
+                    SettlementTier::Stadt => (egui::Color32::GOLD, 0.38),
+                    SettlementTier::Kaiserstadt => (egui::Color32::from_rgb(255, 170, 40), 0.46),
+                    SettlementTier::Hafenstadt => (egui::Color32::from_rgb(90, 205, 235), 0.42),
+                };
+                let has_port = t.settlement.as_ref().map_or(false, |s| s.has_port);
+                let cxf = (sx as f32 + 0.5) * TS as f32;
+                let cyf = (sy as f32 + 0.5) * TS as f32;
+                let r = (rad * TS as f32).max(1.5);
+                let ri = r as i32 + 2;
+                for dy in -ri..=ri {
+                    for dx in -ri..=ri {
+                        let x = cxf as i32 + dx;
+                        let y = cyf as i32 + dy;
+                        if x < 0 || y < 0 || x >= iw as i32 || y >= ih as i32 {
+                            continue;
+                        }
+                        let d = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
+                        let c = if has_port && d > r && d <= r + 1.6 {
+                            egui::Color32::from_rgb(40, 110, 220)
+                        } else if d <= r {
+                            col
+                        } else {
+                            continue;
+                        };
+                        px[y as usize * iw + x as usize] = c;
+                    }
+                }
+            }
+            egui::ColorImage::new([iw, ih], px)
+        };
+        self.tex = Some(ctx.load_texture("map2d", img, egui::TextureOptions::LINEAR));
+        self.tex_key = key;
+    }
+
     fn draw_map(&mut self, ui: &mut egui::Ui) {
         if self.state.is_none() {
             ui.centered_and_justified(|ui| {
@@ -508,6 +585,9 @@ impl MapApp {
         let road_from = self.road_from;
         let selected = self.selected;
         let ca = self.view.tilt_deg.to_radians().cos();
+        let fast = self.view.tilt_deg >= 89.9 && (self.view.rot_deg % 360.0).abs() < 0.01;
+
+        self.ensure_texture(ui.ctx());
 
         let mut hover_cell = None;
         let mut primary_cell = None;
@@ -541,34 +621,67 @@ impl MapApp {
                 egui::pos2(sp.0, sp.1)
             };
 
-            for y in 0..world.height {
-                for x in 0..world.width {
+            if fast {
+                if let Some(tex) = &self.tex {
+                    let p0 = proj(0.0, 0.0, self.view.e_off);
+                    let p1 = proj(world.width as f32, world.height as f32, self.view.e_off);
+                    painter.image(
+                        tex.id(),
+                        egui::Rect::from_two_pos(p0, p1),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
+            } else {
+                let mut tiles: Vec<(f32, usize, usize)> = Vec::new();
+                for y in 0..world.height {
+                    for x in 0..world.width {
+                        let t = world.get(x, y).unwrap();
+                        let sp = proj(x as f32, y as f32, t.elevation);
+                        if sp.x < rect.min.x - cell
+                            || sp.y < rect.min.y - cell
+                            || sp.x > rect.max.x + cell
+                            || sp.y > rect.max.y + cell
+                        {
+                            continue;
+                        }
+                        let bp = proj(x as f32, y as f32, self.view.e_off);
+                        tiles.push((bp.y, x, y));
+                    }
+                }
+                tiles.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                for (_, x, y) in &tiles {
+                    let (x, y) = (*x, *y);
                     let t = world.get(x, y).unwrap();
                     let e = t.elevation;
                     let sp = proj(x as f32, y as f32, e);
-                    if sp.x < rect.min.x - cell
-                        || sp.y < rect.min.y - cell
-                        || sp.x > rect.max.x + cell
-                        || sp.y > rect.max.y + cell
-                    {
-                        continue;
-                    }
                     if ca > 0.08 {
-                        let bp = proj(x as f32, y as f32, self.view.e_off);
-                        let side =
-                            egui::Rect::from_two_pos(bp, egui::pos2(sp.x + cell, sp.y + cell));
-                        let (r, g, b) = palette::biome_rgb(t.effective_biome());
-                        painter.rect_filled(
-                            side,
-                            0.0,
-                            egui::Color32::from_rgb(
+                        let e_south = if y + 1 < world.height {
+                            world.get(x, y + 1).unwrap().elevation
+                        } else {
+                            self.view.e_off
+                        };
+                        let dh = self.view.disp_e(e) - self.view.disp_e(e_south);
+                        if dh > 0.0 {
+                            let ts = proj(x as f32, (y + 1) as f32, e);
+                            let te = proj((x + 1) as f32, (y + 1) as f32, e);
+                            let bs = proj(x as f32, (y + 1) as f32, e_south);
+                            let be = proj((x + 1) as f32, (y + 1) as f32, e_south);
+                            let (r, g, b) = palette::biome_rgb(t.effective_biome());
+                            let col = egui::Color32::from_rgb(
                                 (r as f32 * 0.45) as u8,
                                 (g as f32 * 0.45) as u8,
                                 (b as f32 * 0.45) as u8,
-                            ),
-                        );
+                            );
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![ts, te, be, bs],
+                                col,
+                                egui::Stroke::NONE,
+                            ));
+                        }
                     }
-                    if is_edge_tile(world, x, y) {
+                    if cell >= 10.0 && is_edge_tile(world, x, y) {
                         let sz = cell / SUB as f32 + 0.5;
                         for sy in 0..SUB {
                             for sx in 0..SUB {
@@ -602,75 +715,121 @@ impl MapApp {
                         );
                     }
                 }
-            }
 
-            let road_stroke =
-                egui::Stroke::new((cell * 0.22).max(1.5), egui::Color32::from_rgb(122, 84, 44));
-            for y in 0..world.height {
-                for x in 0..world.width {
-                    if !world.get(x, y).unwrap().road {
-                        continue;
+                let road_stroke =
+                    egui::Stroke::new((cell * 0.22).max(1.5), egui::Color32::from_rgb(160, 120, 70));
+                for y in 0..world.height {
+                    for x in 0..world.width {
+                        if !world.get(x, y).unwrap().road {
+                            continue;
+                        }
+                        let sp = proj(x as f32, y as f32, world.get(x, y).unwrap().elevation);
+                        if sp.x < rect.min.x - cell || sp.y < rect.min.y - cell
+                            || sp.x > rect.max.x + cell || sp.y > rect.max.y + cell {
+                            continue;
+                        }
+                        let t = world.get(x, y).unwrap();
+                        let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
+                        for (nx, ny) in world.neighbors8(x, y) {
+                            let nt = world.get(nx, ny).unwrap();
+                            if nt.road {
+                                let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
+                                painter.line_segment([c0, c1], road_stroke);
+                            }
+                        }
                     }
-                    let t = world.get(x, y).unwrap();
-                    let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
-                    for (nx, ny) in world.neighbors8(x, y) {
-                        let nt = world.get(nx, ny).unwrap();
-                        if nt.road {
-                            let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
-                            painter.line_segment([c0, c1], road_stroke);
+                }
+
+                for y in 0..world.height {
+                    for x in 0..world.width {
+                        let t = world.get(x, y).unwrap();
+                        if t.water != Some(WaterKind::River) && !t.river {
+                            continue;
+                        }
+                        let sp = proj(x as f32, y as f32, t.elevation);
+                        if sp.x < rect.min.x - cell || sp.y < rect.min.y - cell
+                            || sp.x > rect.max.x + cell || sp.y > rect.max.y + cell {
+                            continue;
+                        }
+                        let (rr, rg, rb) =
+                            palette::shade_rgb(world, x, y, palette::biome_rgb(Biome::River));
+                        let wdt = t.river_width.max(1) as f32;
+                        let stroke = egui::Stroke::new(
+                            (cell * 0.14 * wdt).clamp(1.5, cell * 0.9),
+                            egui::Color32::from_rgb(rr, rg, rb),
+                        );
+                        let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
+                        for (nx, ny) in world.neighbors8(x, y) {
+                            let nt = world.get(nx, ny).unwrap();
+                            if nt.water == Some(WaterKind::River) || nt.river {
+                                let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
+                                painter.line_segment([c0, c1], stroke);
+                            }
+                        }
+                    }
+                }
+
+                for y in 0..world.height {
+                    for x in 0..world.width {
+                        let t = world.get(x, y).unwrap();
+                        let sp = proj(x as f32, y as f32, t.elevation);
+                        if sp.x < rect.min.x - cell || sp.y < rect.min.y - cell
+                            || sp.x > rect.max.x + cell || sp.y > rect.max.y + cell {
+                            continue;
+                        }
+                        let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
+                        if world.settlement_tier(x, y).is_some() {
+                            let tier = world.settlement_tier(x, y).unwrap();
+                            let (col, rad) = match tier {
+                                SettlementTier::Gehoeft => (egui::Color32::from_rgb(170, 170, 170), 0.22),
+                                SettlementTier::Dorf => (egui::Color32::from_rgb(255, 200, 120), 0.28),
+                                SettlementTier::Kleinstadt => (egui::Color32::from_rgb(255, 230, 120), 0.32),
+                                SettlementTier::Stadt => (egui::Color32::GOLD, 0.38),
+                                SettlementTier::Kaiserstadt => (egui::Color32::from_rgb(255, 170, 40), 0.46),
+                                SettlementTier::Hafenstadt => (egui::Color32::from_rgb(90, 205, 235), 0.42),
+                            };
+                            let r = (cell * rad).max(2.0);
+                            let has_port = t.settlement.as_ref().map_or(false, |s| s.has_port);
+                            if has_port {
+                                painter.circle_filled(c0, r + 2.5, egui::Color32::from_rgb(40, 110, 220));
+                            }
+                            painter.circle_filled(c0, r, col);
+                        } else if let Some(p) = &t.poi {
+                            let (ch, col) = match p {
+                                Poi::Dungeon { .. } => ("D", egui::Color32::from_rgb(235, 70, 70)),
+                                Poi::Inn { .. } => ("I", egui::Color32::from_rgb(245, 225, 90)),
+                                Poi::Merchant { .. } => ("M", egui::Color32::from_rgb(90, 225, 225)),
+                            };
+                            painter.text(
+                                c0,
+                                egui::Align2::CENTER_CENTER,
+                                ch,
+                                egui::FontId::proportional(cell * 0.7),
+                                col,
+                            );
                         }
                     }
                 }
             }
 
-            for y in 0..world.height {
-                for x in 0..world.width {
-                    let t = world.get(x, y).unwrap();
-                    if t.water != Some(WaterKind::River) && !t.river {
-                        continue;
-                    }
-                    let (rr, rg, rb) =
-                        palette::shade_rgb(world, x, y, palette::biome_rgb(Biome::River));
-                    let wdt = t.river_width.max(1) as f32;
-                    let stroke = egui::Stroke::new(
-                        (cell * 0.14 * wdt).clamp(1.5, cell * 0.9),
-                        egui::Color32::from_rgb(rr, rg, rb),
-                    );
-                    let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
-                    for (nx, ny) in world.neighbors8(x, y) {
-                        let nt = world.get(nx, ny).unwrap();
-                        if nt.water == Some(WaterKind::River) || nt.river {
-                            let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
-                            painter.line_segment([c0, c1], stroke);
+            if fast {
+                for y in 0..world.height {
+                    for x in 0..world.width {
+                        let t = world.get(x, y).unwrap();
+                        if t.poi.is_none() {
+                            continue;
                         }
-                    }
-                }
-            }
-
-            for y in 0..world.height {
-                for x in 0..world.width {
-                    let t = world.get(x, y).unwrap();
-                    let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
-                    if let Some(tier) = world.settlement_tier(x, y) {
-                        let (col, rad) = match tier {
-                            SettlementTier::Gehoeft => (egui::Color32::from_rgb(170, 170, 170), 0.22),
-                            SettlementTier::Dorf => (egui::Color32::from_rgb(255, 200, 120), 0.28),
-                            SettlementTier::Kleinstadt => (egui::Color32::from_rgb(255, 230, 120), 0.32),
-                            SettlementTier::Stadt => (egui::Color32::GOLD, 0.38),
-                            SettlementTier::Kaiserstadt => (egui::Color32::from_rgb(255, 170, 40), 0.46),
-                            SettlementTier::Hafenstadt => (egui::Color32::from_rgb(90, 205, 235), 0.42),
-                        };
-                        let r = (cell * rad).max(2.0);
-                        let has_port = t.settlement.as_ref().map_or(false, |s| s.has_port);
-                        if has_port {
-                            painter.circle_filled(c0, r + 2.5, egui::Color32::from_rgb(40, 110, 220));
+                        let sp = proj(x as f32, y as f32, t.elevation);
+                        if sp.x < rect.min.x - cell || sp.y < rect.min.y - cell
+                            || sp.x > rect.max.x + cell || sp.y > rect.max.y + cell {
+                            continue;
                         }
-                        painter.circle_filled(c0, r, col);
-                    } else if let Some(p) = &t.poi {
-                        let (ch, col) = match p {
-                            Poi::Dungeon { .. } => ("D", egui::Color32::from_rgb(235, 70, 70)),
-                            Poi::Inn { .. } => ("I", egui::Color32::from_rgb(245, 225, 90)),
-                            Poi::Merchant { .. } => ("M", egui::Color32::from_rgb(90, 225, 225)),
+                        let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
+                        let (ch, col) = match &t.poi {
+                            Some(Poi::Dungeon { .. }) => ("D", egui::Color32::from_rgb(235, 70, 70)),
+                            Some(Poi::Inn { .. }) => ("I", egui::Color32::from_rgb(245, 225, 90)),
+                            Some(Poi::Merchant { .. }) => ("M", egui::Color32::from_rgb(90, 225, 225)),
+                            None => continue,
                         };
                         painter.text(
                             c0,
@@ -746,6 +905,7 @@ impl MapApp {
             }
         }
     }
+
 }
 
 impl eframe::App for MapApp {
