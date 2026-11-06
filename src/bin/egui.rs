@@ -10,10 +10,17 @@ struct View3D {
     rot: f32,
     hf: f32,
     tilt: f32,
+    e_off: f32,
+    e_scale: f32,
 }
 
 impl View3D {
+    fn disp_e(&self, e: f32) -> f32 {
+        ((e - self.e_off) * self.e_scale).clamp(0.0, 1.5)
+    }
+
     fn project(&self, x: f32, y: f32, e: f32, origin: egui::Pos2) -> egui::Pos2 {
+        let e = self.disp_e(e);
         let (ts, tc) = self.tilt.sin_cos();
         let ox = x + e * 0.35 * ts;
         let oy = y * tc - e * self.hf;
@@ -48,8 +55,10 @@ impl Default for MapApp25D {
                 cell: 14.0,
                 pan: egui::vec2(60.0, 40.0),
                 rot: 0.0,
-                hf: 0.9,
+                hf: 2.0,
                 tilt: 0.5,
+                e_off: 0.0,
+                e_scale: 1.0,
             },
             hover: None,
             status: "2.5D-Testansicht – Generieren drücken. Mausrad = Zoom, mittlere Taste = Pan, Q/E = Drehen.".to_string(),
@@ -59,7 +68,12 @@ impl Default for MapApp25D {
 
 impl MapApp25D {
     fn generate(&mut self) {
-        self.world = Some(gen::generate(&self.cfg));
+        let world = gen::generate(&self.cfg);
+        let sea = self.cfg.sea_level;
+        let max_e = world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
+        self.view.e_off = sea;
+        self.view.e_scale = 1.0 / (max_e - sea).max(0.01);
+        self.world = Some(world);
         self.status = format!("Karte generiert (Seed {})", self.cfg.seed);
     }
 
@@ -113,9 +127,16 @@ impl MapApp25D {
                 if rect.contains(p) {
                     let factor = (scroll * 0.0016).exp();
                     let new_cell = (self.view.cell * factor).clamp(4.0, 40.0);
-                    let wp = self.view.unproject(p, origin);
-                    self.view.pan = (p - origin) - egui::vec2(wp.0, wp.1) * new_cell;
+                    if let Some(t) = self.tile_at(p, origin, rect) {
+                        let e = self.world.as_ref().unwrap().get(t.0, t.1).unwrap().elevation;
+                        let sp = self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, e, origin);
+                        self.view.pan += p - sp;
+                    }
                     self.view.cell = new_cell;
+                    if !self.view.pan.is_finite() || !self.view.cell.is_finite() {
+                        self.view.pan = egui::vec2(60.0, 40.0);
+                        self.view.cell = 14.0;
+                    }
                 }
             }
         }
@@ -219,15 +240,17 @@ impl eframe::App for MapApp25D {
             ui.heading("Ansicht");
             ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
             ui.add(egui::Slider::new(&mut self.view.rot, 0.0..=std::f32::consts::TAU).text("Drehung (rad)"));
-            ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=2.0).text("Höhenfaktor"));
+            ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=3.0).text("Höhenfaktor"));
             ui.add(egui::Slider::new(&mut self.view.tilt, 0.0..=1.35).text("Kippwinkel (rad)"));
             if ui.button("Ansicht zurücksetzen").clicked() {
                 self.view = View3D {
                     cell: 14.0,
                     pan: egui::vec2(60.0, 40.0),
                     rot: 0.0,
-                    hf: 0.9,
+                    hf: 2.0,
                     tilt: 0.5,
+                    e_off: self.view.e_off,
+                    e_scale: self.view.e_scale,
                 };
             }
             ui.separator();

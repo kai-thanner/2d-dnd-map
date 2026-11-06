@@ -22,7 +22,7 @@ fn default_dry_south() -> f32 {
 }
 
 fn default_river_amount() -> f32 {
-    1.0
+    0.5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

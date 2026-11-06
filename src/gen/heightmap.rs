@@ -16,7 +16,7 @@ pub fn generate(w: &mut World, cfg: &Config) {
             let dx = x as f32 - cx;
             let dy = y as f32 - cy;
             let d = (dx * dx + dy * dy).sqrt() / max_d;
-            e = (e * 1.15 - d * 0.45).clamp(0.0, 1.0);
+            e = (e * 1.32 - d * 0.52).clamp(0.0, 1.0);
             w.get_mut(x, y).unwrap().elevation = e;
         }
     }

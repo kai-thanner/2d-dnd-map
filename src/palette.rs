@@ -39,8 +39,8 @@ pub fn hillshade(w: &World, x: usize, y: usize) -> f32 {
     let er = if x + 1 < w.width { w.get(x + 1, y).unwrap().elevation } else { e };
     let eu = if y > 0 { w.get(x, y - 1).unwrap().elevation } else { e };
     let ed = if y + 1 < w.height { w.get(x, y + 1).unwrap().elevation } else { e };
-    let dzdx = (er - el) / 2.0 * 6.0;
-    let dzdy = (ed - eu) / 2.0 * 6.0;
+    let dzdx = (er - el) / 2.0 * 8.0;
+    let dzdy = (ed - eu) / 2.0 * 8.0;
     let lx = -0.55f32;
     let ly = -0.55;
     let lz = 0.75;

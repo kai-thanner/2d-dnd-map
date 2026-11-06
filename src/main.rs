@@ -42,7 +42,7 @@ struct GenerateArgs {
     moisture: f32,
     #[arg(long, default_value_t = 0.45)]
     dry_south: f32,
-    #[arg(long, default_value_t = 1.0)]
+    #[arg(long, default_value_t = 0.5)]
     river_amount: f32,
     #[arg(long, default_value_t = 0.5)]
     settlements: f32,
