@@ -127,7 +127,7 @@ struct MapApp {
     load_entries: Vec<(String, String)>,
     load_warn: Option<String>,
     tex: Option<egui::TextureHandle>,
-    tex_key: (u64, usize, usize, u64),
+    tex_key: (u64, usize, usize, u64, usize),
     status: String,
 }
 
@@ -155,7 +155,7 @@ impl Default for MapApp {
             load_entries: Vec::new(),
             load_warn: None,
             tex: None,
-            tex_key: (u64::MAX, 0, 0, 0),
+            tex_key: (u64::MAX, 0, 0, 0, 0),
             status: "Bereit – Werte links einstellen und „Generieren“ drücken.".to_string(),
         }
     }
@@ -167,7 +167,7 @@ impl MapApp {
         let sea = self.cfg.sea_level;
         let max_e = world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
         self.view.e_off = sea;
-        self.view.e_scale = 1.0 / (max_e - sea).max(0.01);
+        self.view.e_scale = (self.cfg.max_elevation_m / 3000.0) / (max_e - sea).max(0.01);
         self.state = Some(GameState::new(world));
         self.rng = rng::edit_rng(self.cfg.seed);
         self.road_from = None;
@@ -246,7 +246,7 @@ impl MapApp {
                 let sea = self.cfg.sea_level;
                 let max_e = state.world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
                 self.view.e_off = sea;
-                self.view.e_scale = 1.0 / (max_e - sea).max(0.01);
+                self.view.e_scale = (self.cfg.max_elevation_m / 3000.0) / (max_e - sea).max(0.01);
                 self.state = Some(state);
                 self.file_path = path.to_string();
                 self.map_name = p.file_stem().map(|s| s.to_string_lossy().to_string());
@@ -461,20 +461,26 @@ impl MapApp {
 
     fn ensure_texture(&mut self, ctx: &egui::Context) {
         let Some(state) = &self.state else { return };
-        let key = (state.revision, state.world.width, state.world.height, self.cfg.seed);
+        let ts = ((self.view.cell / 2.0) as usize).clamp(2, 8);
+        let key = (
+            state.revision,
+            state.world.width,
+            state.world.height,
+            self.cfg.seed,
+            ts,
+        );
         if key == self.tex_key && self.tex.is_some() {
             return;
         }
-        const TS: usize = 2;
         let img = {
             let w = &state.world;
-            let iw = w.width * TS;
-            let ih = w.height * TS;
+            let iw = w.width * ts;
+            let ih = w.height * ts;
             let mut px = vec![egui::Color32::BLACK; iw * ih];
             for py in 0..ih {
                 for pxx in 0..iw {
-                    let fx = pxx as f32 / TS as f32;
-                    let fy = py as f32 / TS as f32;
+                    let fx = pxx as f32 / ts as f32;
+                    let fy = py as f32 / ts as f32;
                     let e_sub = bilinear_elev(w, fx, fy);
                     let tx = (fx.floor() as usize).min(w.width - 1);
                     let ty = (fy.floor() as usize).min(w.height - 1);
@@ -503,9 +509,9 @@ impl MapApp {
                     SettlementTier::Hafenstadt => (egui::Color32::from_rgb(90, 205, 235), 0.42),
                 };
                 let has_port = t.settlement.as_ref().map_or(false, |s| s.has_port);
-                let cxf = (sx as f32 + 0.5) * TS as f32;
-                let cyf = (sy as f32 + 0.5) * TS as f32;
-                let r = (rad * TS as f32).max(1.5);
+                let cxf = (sx as f32 + 0.5) * ts as f32;
+                let cyf = (sy as f32 + 0.5) * ts as f32;
+                let r = (rad * ts as f32).max(1.5);
                 let ri = r as i32 + 2;
                 for dy in -ri..=ri {
                     for dx in -ri..=ri {
@@ -633,7 +639,7 @@ impl MapApp {
                     );
                 }
             } else {
-                let mut tiles: Vec<(f32, usize, usize)> = Vec::new();
+                let mut tiles: Vec<(f32, f32, usize, usize)> = Vec::new();
                 for y in 0..world.height {
                     for x in 0..world.width {
                         let t = world.get(x, y).unwrap();
@@ -646,12 +652,12 @@ impl MapApp {
                             continue;
                         }
                         let bp = proj(x as f32, y as f32, self.view.e_off);
-                        tiles.push((bp.y, x, y));
+                        tiles.push((bp.y, bp.x, x, y));
                     }
                 }
-                tiles.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                tiles.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)));
 
-                for (_, x, y) in &tiles {
+                for (_, _, x, y) in &tiles {
                     let (x, y) = (*x, *y);
                     let t = world.get(x, y).unwrap();
                     let e = t.elevation;
@@ -681,7 +687,7 @@ impl MapApp {
                             ));
                         }
                     }
-                    if cell >= 10.0 && is_edge_tile(world, x, y) {
+                    if cell >= 8.0 && is_edge_tile(world, x, y) {
                         let sz = cell / SUB as f32 + 0.5;
                         for sy in 0..SUB {
                             for sx in 0..SUB {
@@ -974,8 +980,8 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.dry_south, 0.0..=1.0).text("Trockenheit Süden (Wüste)"));
                 ui.add(egui::Slider::new(&mut self.cfg.river_amount, 0.0..=2.0).text("Flussmenge"));
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
-                ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Höhe (m)"));
-                ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=4000.0).text("Baumgrenze (m)"));
+                ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Berghöhe (m)"));
+                ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=5000.0).text("Baumgrenze (m)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.lapse_per_unit, 0.0..=100.0).text("Höhen-Lapse"));

@@ -46,7 +46,7 @@ struct GenerateArgs {
     river_amount: f32,
     #[arg(long, default_value_t = 3000.0)]
     max_elevation: f32,
-    #[arg(long, default_value_t = 1700.0)]
+    #[arg(long, default_value_t = 2000.0)]
     treeline: f32,
     #[arg(long, default_value_t = 0.5)]
     settlements: f32,

@@ -12,14 +12,20 @@ pub fn assign(w: &mut World, cfg: &Config) {
             let temp = t.temperature;
             let river = t.river;
             let h_m = h * cfg.max_elevation_m;
+            let lat = y as f32 / w.height as f32;
+            let treeline_eff = cfg.treeline_m * (0.8 + 0.5 * lat);
             let land = if temp <= cfg.climate.snow_temp {
                 Biome::Snow
-            } else if h >= 0.34 {
-                Biome::Mountain
-            } else if h_m > cfg.treeline_m {
-                Biome::Rock
-            } else if h >= 0.22 {
-                Biome::Rock
+            } else if h_m > treeline_eff {
+                if h >= 0.34 {
+                    Biome::Mountain
+                } else if h_m > treeline_eff + 800.0 {
+                    Biome::Rock
+                } else if t.moisture >= 0.35 {
+                    Biome::Grassland
+                } else {
+                    Biome::Steppe
+                }
             } else {
                 let near_ocean = w
                     .neighbors8(x, y)

@@ -304,7 +304,7 @@ impl World {
         out
     }
 
-    fn is_port_water_tile(t: &Tile) -> bool {
+    pub fn is_port_water_tile(t: &Tile) -> bool {
         match t.water {
             Some(WaterKind::Ocean) | Some(WaterKind::Lake) => true,
             Some(WaterKind::River) => t.river_width >= 2,

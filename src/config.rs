@@ -33,7 +33,7 @@ fn default_max_elevation_m() -> f32 {
 }
 
 fn default_treeline_m() -> f32 {
-    1700.0
+    2000.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

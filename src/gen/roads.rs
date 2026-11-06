@@ -5,36 +5,120 @@ use std::collections::BinaryHeap;
 use std::collections::HashSet;
 
 pub fn connect(w: &mut World) {
-    let points = w.settlements();
-    if points.len() < 2 {
+    let setts = w.settlements();
+    if setts.len() < 2 {
         return;
     }
-    let mut connected = vec![points[0]];
-    let mut rest = points[1..].to_vec();
-    while !rest.is_empty() {
-        let mut best: Option<(f32, (usize, usize), (usize, usize))> = None;
-        for c in &connected {
-            for r in &rest {
-                let d = World::dist(*c, *r);
-                if best.map_or(true, |(bd, _, _)| d < bd) {
-                    best = Some((d, *c, *r));
+    let mut used: std::collections::HashSet<((usize, usize), (usize, usize))> = std::collections::HashSet::new();
+    let mut carve = |w: &mut World, a: (usize, usize), b: (usize, usize)| {
+        let key = if a <= b { (a, b) } else { (b, a) };
+        if used.contains(&key) {
+            return;
+        }
+        if let Some(path) = carve_path(w, a, b) {
+            used.insert(key);
+            for (x, y) in path {
+                w.get_mut(x, y).unwrap().road = true;
+            }
+        }
+    };
+    let mut in_tree: Vec<bool> = vec![false; setts.len()];
+    let mut best: Vec<(f32, usize)> = vec![(f32::INFINITY, 0); setts.len()];
+    in_tree[0] = true;
+    for j in 1..setts.len() {
+        best[j] = (World::dist(setts[0], setts[j]), 0);
+    }
+    for _ in 1..setts.len() {
+        let mut bi = None;
+        let mut bc = f32::INFINITY;
+        for j in 0..setts.len() {
+            if !in_tree[j] && best[j].0 < bc {
+                bc = best[j].0;
+                bi = Some(j);
+            }
+        }
+        let Some(i) = bi else { break };
+        in_tree[i] = true;
+        carve(w, setts[i], setts[best[i].1]);
+        for j in 0..setts.len() {
+            if !in_tree[j] {
+                let d = World::dist(setts[i], setts[j]);
+                if d < best[j].0 {
+                    best[j] = (d, i);
                 }
             }
         }
-        if let Some((_, c, r)) = best {
-            if let Some(path) = carve_path(w, c, r) {
-                for (x, y) in path {
-                    if let Some(t) = w.get_mut(x, y) {
-                        t.road = true;
-                    }
+    }
+    for (i, s) in setts.iter().enumerate() {
+        let mut nearest: Option<(usize, f32)> = None;
+        for (j, t) in setts.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            let d = World::dist(*s, *t);
+            if nearest.map_or(true, |(_, bd)| d < bd) {
+                nearest = Some((j, d));
+            }
+        }
+        if let Some((j, _)) = nearest {
+            carve(w, *s, setts[j]);
+        }
+    }
+    for _ in 0..setts.len() {
+        let reached = reachable_settlements(w, &setts);
+        let missing: Vec<(usize, usize)> =
+            setts.iter().filter(|s| !reached.contains(s)).cloned().collect();
+        if missing.is_empty() {
+            break;
+        }
+        let mut progressed = false;
+        for m in &missing {
+            let mut nearest: Option<((usize, usize), f32)> = None;
+            for r in &reached {
+                let d = World::dist(*m, *r);
+                if nearest.map_or(true, |(_, bd)| d < bd) {
+                    nearest = Some((*r, d));
                 }
             }
-            connected.push(r);
-            rest.retain(|p| *p != r);
-        } else {
+            if let Some((r, _)) = nearest {
+                let before = w.tiles.iter().filter(|t| t.road).count();
+                carve(w, *m, r);
+                if w.tiles.iter().filter(|t| t.road).count() > before {
+                    progressed = true;
+                }
+            }
+        }
+        if !progressed {
             break;
         }
     }
+}
+
+fn reachable_settlements(
+    w: &World,
+    setts: &[(usize, usize)],
+) -> std::collections::HashSet<(usize, usize)> {
+    let mut reached = std::collections::HashSet::new();
+    if setts.is_empty() {
+        return reached;
+    }
+    let start = setts[0];
+    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut stack = vec![start];
+    while let Some(p) = stack.pop() {
+        if !seen.insert(p) {
+            continue;
+        }
+        if w.get(p.0, p.1).unwrap().settlement.is_some() {
+            reached.insert(p);
+        }
+        for n in w.neighbors8(p.0, p.1) {
+            if w.get(n.0, n.1).unwrap().road {
+                stack.push(n);
+            }
+        }
+    }
+    reached
 }
 
 fn step_cost(w: &World, ni: usize, x: usize, y: usize, from_e: f32, jitter: &Noise, ports: &HashSet<usize>) -> f32 {
@@ -74,21 +158,7 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
             ^ ((to.0 as u64) << 5)
             ^ (to.1 as u64),
     );
-    let mut ports: HashSet<usize> = HashSet::new();
-    for (sx, sy) in w.settlements() {
-        let has_port = w
-            .get(sx, sy)
-            .unwrap()
-            .settlement
-            .as_ref()
-            .map_or(false, |s| s.has_port);
-        if has_port {
-            ports.insert(w.idx(sx, sy));
-            for n in w.neighbors8(sx, sy) {
-                ports.insert(w.idx(n.0, n.1));
-            }
-        }
-    }
+    let ports = compute_ports(w);
     let n = w.tiles.len();
     let mut dist = vec![f32::INFINITY; n];
     let mut prev: Vec<Option<usize>> = vec![None; n];
@@ -151,4 +221,67 @@ pub fn has_adjacent_road(w: &World, p: (usize, usize)) -> bool {
         || w.neighbors8(p.0, p.1)
             .iter()
             .any(|n| w.get(n.0, n.1).unwrap().road)
+}
+
+pub fn compute_ports(w: &World) -> HashSet<usize> {
+    let mut ports: HashSet<usize> = HashSet::new();
+    let mut visited = vec![false; w.tiles.len()];
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let i = w.idx(x, y);
+            if visited[i] || w.tiles[i].elevation < w.sea_level {
+                continue;
+            }
+            let mut comp: Vec<(usize, usize)> = Vec::new();
+            let mut stack = vec![(x, y)];
+            visited[i] = true;
+            while let Some((cx, cy)) = stack.pop() {
+                comp.push((cx, cy));
+                for n in w.neighbors4(cx, cy) {
+                    let ni = w.idx(n.0, n.1);
+                    if !visited[ni] && w.tiles[ni].elevation >= w.sea_level {
+                        visited[ni] = true;
+                        stack.push(n);
+                    }
+                }
+            }
+            let settled = comp.iter().any(|(cx, cy)| w.get(*cx, *cy).unwrap().settlement.is_some());
+            if !settled {
+                continue;
+            }
+            for (cx, cy) in &comp {
+                let land = w.get(*cx, *cy).unwrap();
+                let at_port_water = w
+                    .neighbors8(*cx, *cy)
+                    .iter()
+                    .any(|n| World::is_port_water_tile(w.get(n.0, n.1).unwrap()));
+                if at_port_water && !land.is_water() {
+                    ports.insert(w.idx(*cx, *cy));
+                }
+            }
+            if settled {
+                // schiffbares Gewaesser: von der Kueste besiedelter Landmassen erreichbares Wasser
+                let mut wstack: Vec<(usize, usize)> = Vec::new();
+                for (cx, cy) in &comp {
+                    for n in w.neighbors8(*cx, *cy) {
+                        let nt = w.get(n.0, n.1).unwrap();
+                        if World::is_port_water_tile(nt) && !ports.contains(&w.idx(n.0, n.1)) {
+                            ports.insert(w.idx(n.0, n.1));
+                            wstack.push(n);
+                        }
+                    }
+                }
+                while let Some((x, y)) = wstack.pop() {
+                    for n in w.neighbors8(x, y) {
+                        let ni = w.idx(n.0, n.1);
+                        if !ports.contains(&ni) && World::is_port_water_tile(w.get(n.0, n.1).unwrap()) {
+                            ports.insert(ni);
+                            wstack.push(n);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ports
 }
