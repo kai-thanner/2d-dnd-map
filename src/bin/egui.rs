@@ -1,4 +1,4 @@
-use dnd_2d_map::config::Config;
+use dnd_2d_map::config::{Config, TILE_SIZE_M};
 use dnd_2d_map::edit::{Edit, GameState, PoiKind};
 use dnd_2d_map::gen;
 use dnd_2d_map::palette;
@@ -167,7 +167,7 @@ impl MapApp {
         let sea = self.cfg.sea_level;
         let max_e = world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
         self.view.e_off = sea;
-        self.view.e_scale = (self.cfg.max_elevation_m / self.cfg.tile_size_m) / (max_e - sea).max(0.01);
+        self.view.e_scale = (self.cfg.max_elevation_m / TILE_SIZE_M) / (max_e - sea).max(0.01);
         self.state = Some(GameState::new(world));
         self.rng = rng::edit_rng(self.cfg.seed);
         self.road_from = None;
@@ -246,7 +246,7 @@ impl MapApp {
                 let sea = self.cfg.sea_level;
                 let max_e = state.world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
                 self.view.e_off = sea;
-                self.view.e_scale = (self.cfg.max_elevation_m / self.cfg.tile_size_m) / (max_e - sea).max(0.01);
+                self.view.e_scale = (self.cfg.max_elevation_m / TILE_SIZE_M) / (max_e - sea).max(0.01);
                 self.state = Some(state);
                 self.file_path = path.to_string();
                 self.map_name = p.file_stem().map(|s| s.to_string_lossy().to_string());
@@ -1002,15 +1002,14 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
                 ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Berghöhe (m)"));
                 ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=5000.0).text("Baumgrenze (m)"));
-                ui.add(egui::Slider::new(&mut self.cfg.tile_size_m, 50.0..=5000.0).text("Kachelgröße (m) = Spielfläche"));
                 ui.label(format!(
-                    "Kartenmaße: {}x{} Kacheln à {:.0} m = {:.1} km x {:.1} km = {:.0} km²",
+                    "Kartenmaße: {}x{} Kacheln à {:.0} m (14 px) = {:.1} km x {:.1} km = {:.0} km²; max. Wassertiefe = sea_level x max. Berghöhe",
                     self.cfg.width,
                     self.cfg.height,
-                    self.cfg.tile_size_m,
-                    self.cfg.width as f32 * self.cfg.tile_size_m / 1000.0,
-                    self.cfg.height as f32 * self.cfg.tile_size_m / 1000.0,
-                    self.cfg.width as f32 * self.cfg.height as f32 * self.cfg.tile_size_m.powi(2) / 1e6
+                    TILE_SIZE_M,
+                    self.cfg.width as f32 * TILE_SIZE_M / 1000.0,
+                    self.cfg.height as f32 * TILE_SIZE_M / 1000.0,
+                    self.cfg.width as f32 * self.cfg.height as f32 * TILE_SIZE_M.powi(2) / 1e6
                 ));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));

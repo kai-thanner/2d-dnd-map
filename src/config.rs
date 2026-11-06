@@ -36,9 +36,8 @@ fn default_treeline_m() -> f32 {
     2000.0
 }
 
-fn default_tile_size_m() -> f32 {
-    1000.0
-}
+/// Fester Massstab: 14 px (1 Kachel) = 1000 m. 100 Kacheln breit = 100 km breit.
+pub const TILE_SIZE_M: f32 = 1000.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -55,8 +54,6 @@ pub struct Config {
     pub max_elevation_m: f32,
     #[serde(default = "default_treeline_m")]
     pub treeline_m: f32,
-    #[serde(default = "default_tile_size_m")]
-    pub tile_size_m: f32,
     pub settlement_density: f32,
     pub climate: Climate,
 }
@@ -73,7 +70,6 @@ impl Default for Config {
             river_amount: default_river_amount(),
             max_elevation_m: default_max_elevation_m(),
             treeline_m: default_treeline_m(),
-            tile_size_m: default_tile_size_m(),
             settlement_density: 0.5,
             climate: Climate::default(),
         }

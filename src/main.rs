@@ -48,8 +48,6 @@ struct GenerateArgs {
     max_elevation: f32,
     #[arg(long, default_value_t = 2000.0)]
     treeline: f32,
-    #[arg(long, default_value_t = 1000.0)]
-    tile_size: f32,
     #[arg(long, default_value_t = 0.5)]
     settlements: f32,
     #[arg(long, default_value_t = 28.0)]
@@ -114,7 +112,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 river_amount: a.river_amount,
                 max_elevation_m: a.max_elevation,
                 treeline_m: a.treeline,
-                tile_size_m: a.tile_size,
                 settlement_density: a.settlements,
                 climate: Climate {
                     south_temp: a.south_temp,
