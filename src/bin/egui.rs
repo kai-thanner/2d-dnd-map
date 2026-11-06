@@ -9,12 +9,14 @@ struct View3D {
     pan: egui::Vec2,
     rot: f32,
     hf: f32,
+    tilt: f32,
 }
 
 impl View3D {
     fn project(&self, x: f32, y: f32, e: f32, origin: egui::Pos2) -> egui::Pos2 {
-        let ox = x + e * 0.35;
-        let oy = y - e * self.hf;
+        let (ts, tc) = self.tilt.sin_cos();
+        let ox = x + e * 0.35 * ts;
+        let oy = y * tc - e * self.hf;
         let (s, c) = self.rot.sin_cos();
         origin + self.pan + egui::vec2((ox * c - oy * s) * self.cell, (ox * s + oy * c) * self.cell)
     }
@@ -22,7 +24,10 @@ impl View3D {
     fn unproject(&self, p: egui::Pos2, origin: egui::Pos2) -> (f32, f32) {
         let v = (p - origin - self.pan) / self.cell;
         let (s, c) = self.rot.sin_cos();
-        (v.x * c + v.y * s, -v.x * s + v.y * c)
+        let rx = v.x * c + v.y * s;
+        let ry = -v.x * s + v.y * c;
+        let tc = self.tilt.cos().max(0.15);
+        (rx, ry / tc)
     }
 }
 
@@ -43,7 +48,8 @@ impl Default for MapApp25D {
                 cell: 14.0,
                 pan: egui::vec2(60.0, 40.0),
                 rot: 0.0,
-                hf: 0.55,
+                hf: 0.9,
+                tilt: 0.5,
             },
             hover: None,
             status: "2.5D-Testansicht – Generieren drücken. Mausrad = Zoom, mittlere Taste = Pan, Q/E = Drehen.".to_string(),
@@ -213,13 +219,15 @@ impl eframe::App for MapApp25D {
             ui.heading("Ansicht");
             ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
             ui.add(egui::Slider::new(&mut self.view.rot, 0.0..=std::f32::consts::TAU).text("Drehung (rad)"));
-            ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=1.5).text("Höhenfaktor"));
+            ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=2.0).text("Höhenfaktor"));
+            ui.add(egui::Slider::new(&mut self.view.tilt, 0.0..=1.35).text("Kippwinkel (rad)"));
             if ui.button("Ansicht zurücksetzen").clicked() {
                 self.view = View3D {
                     cell: 14.0,
                     pan: egui::vec2(60.0, 40.0),
                     rot: 0.0,
-                    hf: 0.55,
+                    hf: 0.9,
+                    tilt: 0.5,
                 };
             }
             ui.separator();

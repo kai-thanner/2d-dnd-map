@@ -444,17 +444,19 @@ impl MapApp {
                 }
             }
 
-            let (rr, rg, rb) = palette::biome_rgb(Biome::River);
-            let river_col = egui::Color32::from_rgb(rr, rg, rb);
             for y in y0..y1 {
                 for x in x0..x1 {
                     let t = world.get(x, y).unwrap();
                     if t.water != Some(WaterKind::River) && !t.river {
                         continue;
                     }
+                    let (rr, rg, rb) =
+                        palette::shade_rgb(world, x, y, palette::biome_rgb(Biome::River));
                     let wdt = t.river_width.max(1) as f32;
-                    let stroke =
-                        egui::Stroke::new((cell * 0.14 * wdt).clamp(1.5, cell * 0.9), river_col);
+                    let stroke = egui::Stroke::new(
+                        (cell * 0.14 * wdt).clamp(1.5, cell * 0.9),
+                        egui::Color32::from_rgb(rr, rg, rb),
+                    );
                     let center =
                         origin + egui::vec2((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
                     for (nx, ny) in world.neighbors8(x, y) {
@@ -646,6 +648,7 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.sea_level, 0.0..=1.0).text("Wasser (sea_level)"));
                 ui.add(egui::Slider::new(&mut self.cfg.moisture_scale, 0.0..=1.0).text("Feuchtigkeit"));
                 ui.add(egui::Slider::new(&mut self.cfg.dry_south, 0.0..=1.0).text("Trockenheit Süden (Wüste)"));
+                ui.add(egui::Slider::new(&mut self.cfg.river_amount, 0.0..=2.0).text("Flussmenge"));
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));

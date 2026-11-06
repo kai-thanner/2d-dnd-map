@@ -596,3 +596,28 @@ fn river_sprawl_is_bounded() {
         );
     }
 }
+
+#[test]
+fn river_amount_scales_river_count() {
+    use dnd_2d_map::world::WaterKind;
+    let count_rivers = |amount: f32| {
+        let cfg = Config {
+            seed: 9,
+            width: 100,
+            height: 50,
+            river_amount: amount,
+            ..Config::default()
+        };
+        gen::generate(&cfg)
+            .tiles
+            .iter()
+            .filter(|t| t.water == Some(WaterKind::River))
+            .count()
+    };
+    let zero = count_rivers(0.0);
+    let one = count_rivers(1.0);
+    let two = count_rivers(2.0);
+    assert!(one > 0, "Default muss Fluesse erzeugen");
+    assert!(two >= one, "mehr Flussmenge darf nicht weniger Fluesse ergeben ({two} vs {one})");
+    assert!(zero <= one, "Flussmenge 0 darf hoechstens gleich viel sein ({zero} vs {one})");
+}

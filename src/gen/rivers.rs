@@ -19,7 +19,11 @@ pub fn carve(w: &mut World, cfg: &Config) {
         let eb = w.get(b.0, b.1).unwrap().elevation;
         eb.partial_cmp(&ea).unwrap()
     });
-    let n_rivers = ((w.width * w.height) as f32 / 1800.0).max(3.0) as usize;
+    let n_rivers = if cfg.river_amount <= 0.0 {
+        0
+    } else {
+        (((w.width * w.height) as f32 / 1800.0) * cfg.river_amount).max(3.0) as usize
+    };
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     for s in sources {
         if chosen.len() >= n_rivers {
