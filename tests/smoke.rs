@@ -460,3 +460,119 @@ fn settlement_tiers_by_population() {
     assert_eq!(Gehoeft.marker(), 'g');
     assert_eq!(Hafenstadt.marker(), 'H');
 }
+
+#[test]
+fn drain_removes_small_streams() {
+    use dnd_2d_map::world::WaterKind;
+    let cfg = test_cfg(9);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::edit_rng(cfg.seed);
+    let stream = (0..state.world.height)
+        .flat_map(|y| (0..state.world.width).map(move |x| (x, y)))
+        .find(|(x, y)| {
+            let t = state.world.get(*x, *y).unwrap();
+            t.water == Some(WaterKind::River) && t.river_width == 1
+        })
+        .expect("kein 1px-Bach gefunden");
+    state.apply(Edit::DrainLake { x: stream.0, y: stream.1, radius: 1 }, &mut rng);
+    let t = state.world.get(stream.0, stream.1).unwrap();
+    assert!(t.water.is_none(), "kleiner Bach muss austrocknen");
+    assert!(!t.river);
+}
+
+#[test]
+fn flood_swallows_stream() {
+    use dnd_2d_map::world::WaterKind;
+    let cfg = test_cfg(9);
+    let world = gen::generate(&cfg);
+    let mut state = GameState::new(world);
+    let mut rng = rng::edit_rng(cfg.seed);
+    let stream = (0..state.world.height)
+        .flat_map(|y| (0..state.world.width).map(move |x| (x, y)))
+        .find(|(x, y)| state.world.get(*x, *y).unwrap().water == Some(WaterKind::River))
+        .expect("kein Bach gefunden");
+    state.apply(Edit::Flood { x: stream.0, y: stream.1, radius: 2 }, &mut rng);
+    let t = state.world.get(stream.0, stream.1).unwrap();
+    assert_eq!(t.water, Some(WaterKind::Lake), "See muss den Bach innerhalb des Radius ueberdecken");
+    assert!(!t.river);
+}
+
+#[test]
+fn every_settled_landmass_has_a_harbor() {
+    use dnd_2d_map::world::SettlementTier;
+    for seed in 1..=8u64 {
+        let cfg = Config {
+            seed,
+            width: 120,
+            height: 60,
+            ..Config::default()
+        };
+        let w = gen::generate(&cfg);
+        let sea = cfg.sea_level;
+        let mut visited = vec![false; w.tiles.len()];
+        for y in 0..w.height {
+            for x in 0..w.width {
+                let i = w.idx(x, y);
+                if visited[i] || w.tiles[i].elevation < sea {
+                    continue;
+                }
+                let mut comp = Vec::new();
+                let mut stack = vec![(x, y)];
+                visited[i] = true;
+                while let Some((cx, cy)) = stack.pop() {
+                    comp.push((cx, cy));
+                    for n in w.neighbors4(cx, cy) {
+                        let ni = w.idx(n.0, n.1);
+                        if !visited[ni] && w.tiles[ni].elevation >= sea {
+                            visited[ni] = true;
+                            stack.push(n);
+                        }
+                    }
+                }
+                let setts: Vec<(usize, usize)> = comp
+                    .iter()
+                    .filter(|(cx, cy)| w.get(*cx, *cy).unwrap().settlement.is_some())
+                    .cloned()
+                    .collect();
+                if setts.is_empty() {
+                    continue;
+                }
+                let total_pop: u64 = setts
+                    .iter()
+                    .map(|s| w.get(s.0, s.1).unwrap().settlement.as_ref().unwrap().population as u64)
+                    .sum();
+                if total_pop < 2000 {
+                    continue;
+                }
+                let has_harbor = setts
+                    .iter()
+                    .any(|s| w.settlement_tier(s.0, s.1) == Some(SettlementTier::Hafenstadt));
+                assert!(has_harbor, "Landmasse mit {total_pop} Ew. (Seed {seed}) hat keinen Hafen");
+            }
+        }
+    }
+}
+
+#[test]
+fn dry_south_creates_more_desert_in_south() {
+    let cfg = Config {
+        seed: 3,
+        width: 100,
+        height: 60,
+        moisture_scale: 0.55,
+        dry_south: 1.0,
+        ..Config::default()
+    };
+    let w = gen::generate(&cfg);
+    let count_desert = |y0: usize, y1: usize| -> usize {
+        (y0..y1)
+            .flat_map(|y| (0..w.width).map(move |x| (x, y)))
+            .filter(|(x, y)| w.get(*x, *y).unwrap().biome == Biome::Desert)
+            .count()
+    };
+    let north = count_desert(0, w.height / 4);
+    let south = count_desert(w.height - w.height / 4, w.height);
+    assert!(south > 0, "im Süden muss Wüste entstehen");
+    assert!(south > north, "Süden ({south}) muss mehr Wüste haben als Norden ({north})");
+}

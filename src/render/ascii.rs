@@ -25,7 +25,7 @@ impl AsciiRenderer {
     }
 
     pub fn legend() -> String {
-        let mut s = String::from("Legende:\n");
+        let mut s = String::from("Legende (Norden = oben):\n");
         for b in [
             Biome::Ocean,
             Biome::Lake,

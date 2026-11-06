@@ -538,6 +538,29 @@ impl MapApp {
             if let Some(pos) = hover_cell {
                 mark(pos, egui::Color32::from_white_alpha(70));
             }
+
+            let nc = rect.max - egui::vec2(52.0, 52.0);
+            let ncenter = nc + egui::vec2(20.0, 20.0);
+            painter.circle_filled(ncenter, 17.0, egui::Color32::from_white_alpha(210));
+            painter.line_segment(
+                [ncenter + egui::vec2(0.0, 11.0), ncenter - egui::vec2(0.0, 6.0)],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
+            painter.line_segment(
+                [ncenter - egui::vec2(0.0, 6.0), ncenter + egui::vec2(-5.0, 1.0)],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
+            painter.line_segment(
+                [ncenter - egui::vec2(0.0, 6.0), ncenter + egui::vec2(5.0, 1.0)],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
+            painter.text(
+                ncenter + egui::vec2(0.0, 13.0),
+                egui::Align2::CENTER_CENTER,
+                "N",
+                egui::FontId::proportional(11.0),
+                egui::Color32::BLACK,
+            );
         }
 
         self.hover = hover_cell;
@@ -613,6 +636,7 @@ impl eframe::App for MapApp {
                 });
                 ui.add(egui::Slider::new(&mut self.cfg.sea_level, 0.0..=1.0).text("Wasser (sea_level)"));
                 ui.add(egui::Slider::new(&mut self.cfg.moisture_scale, 0.0..=1.0).text("Feuchtigkeit"));
+                ui.add(egui::Slider::new(&mut self.cfg.dry_south, 0.0..=1.0).text("Trockenheit Süden (Wüste)"));
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));
