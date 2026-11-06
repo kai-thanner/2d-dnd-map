@@ -25,7 +25,7 @@ impl Default for View3D {
 
 impl View3D {
     pub fn disp_e(&self, e: f32) -> f32 {
-        ((e - self.e_off) * self.e_scale).clamp(0.0, 1.5)
+        ((e - self.e_off) * self.e_scale).clamp(0.0, 64.0)
     }
 
     pub fn project(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32, center: (f32, f32)) -> (f32, f32) {

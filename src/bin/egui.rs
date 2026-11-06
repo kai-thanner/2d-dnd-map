@@ -167,7 +167,7 @@ impl MapApp {
         let sea = self.cfg.sea_level;
         let max_e = world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
         self.view.e_off = sea;
-        self.view.e_scale = (self.cfg.max_elevation_m / 3000.0) / (max_e - sea).max(0.01);
+        self.view.e_scale = (self.cfg.max_elevation_m / self.cfg.tile_size_m) / (max_e - sea).max(0.01);
         self.state = Some(GameState::new(world));
         self.rng = rng::edit_rng(self.cfg.seed);
         self.road_from = None;
@@ -246,7 +246,7 @@ impl MapApp {
                 let sea = self.cfg.sea_level;
                 let max_e = state.world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
                 self.view.e_off = sea;
-                self.view.e_scale = (self.cfg.max_elevation_m / 3000.0) / (max_e - sea).max(0.01);
+                self.view.e_scale = (self.cfg.max_elevation_m / self.cfg.tile_size_m) / (max_e - sea).max(0.01);
                 self.state = Some(state);
                 self.file_path = path.to_string();
                 self.map_name = p.file_stem().map(|s| s.to_string_lossy().to_string());
@@ -569,13 +569,13 @@ impl MapApp {
         };
         if middle_down && response.hovered() {
             if shift {
-                self.view.pan.0 += delta.x;
-                self.view.pan.1 += delta.y;
-            } else {
                 self.view.tilt_deg = (self.view.tilt_deg - delta.y * 0.25).clamp(0.0, 90.0);
                 if delta.x != 0.0 {
                     self.view.rotate_at(pivot, mcx, mcy, center, delta.x * 0.25);
                 }
+            } else {
+                self.view.pan.0 += delta.x;
+                self.view.pan.1 += delta.y;
             }
         }
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
@@ -1002,6 +1002,16 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
                 ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Berghöhe (m)"));
                 ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=5000.0).text("Baumgrenze (m)"));
+                ui.add(egui::Slider::new(&mut self.cfg.tile_size_m, 50.0..=5000.0).text("Kachelgröße (m) = Spielfläche"));
+                ui.label(format!(
+                    "Kartenmaße: {}x{} Kacheln à {:.0} m = {:.1} km x {:.1} km = {:.0} km²",
+                    self.cfg.width,
+                    self.cfg.height,
+                    self.cfg.tile_size_m,
+                    self.cfg.width as f32 * self.cfg.tile_size_m / 1000.0,
+                    self.cfg.height as f32 * self.cfg.tile_size_m / 1000.0,
+                    self.cfg.width as f32 * self.cfg.height as f32 * self.cfg.tile_size_m.powi(2) / 1e6
+                ));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.lapse_per_unit, 0.0..=100.0).text("Höhen-Lapse"));
@@ -1059,7 +1069,7 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
                 ui.add(egui::Slider::new(&mut self.view.rot_deg, 0.0..=360.0).text("Drehung (°)"));
                 ui.add(egui::Slider::new(&mut self.view.tilt_deg, 0.0..=90.0).text("Kippwinkel (°)"));
-                ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Shift + mittlere Maustaste = Karte verschieben. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
+                ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste = Karte verschieben. Shift + mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
                     let e_scale = self.view.e_scale;
