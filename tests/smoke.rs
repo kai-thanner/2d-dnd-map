@@ -756,3 +756,33 @@ fn no_river_flags_inside_lakes() {
         }
     }
 }
+
+#[test]
+fn update_poi_edits_merchant_name_and_goods() {
+    use dnd_2d_map::edit::{Edit, GameState, PoiKind};
+    use dnd_2d_map::world::Poi;
+    let mut w = World::new(10, 10);
+    w.sea_level = 0.0;
+    for t in &mut w.tiles {
+        t.elevation = 0.5;
+    }
+    let mut state = GameState::new(w);
+    let mut rng = rng::from_seed(1);
+    state.apply(Edit::AddPoi { x: 3, y: 3, kind: PoiKind::Merchant }, &mut rng);
+    state.apply(
+        Edit::UpdatePoi {
+            x: 3,
+            y: 3,
+            name: Some("Baron Testmann".to_string()),
+            goods: Some("Drachenzähne".to_string()),
+        },
+        &mut rng,
+    );
+    match &state.world.get(3, 3).unwrap().poi {
+        Some(Poi::Merchant { name, goods }) => {
+            assert_eq!(name.as_str(), "Baron Testmann");
+            assert_eq!(goods.as_str(), "Drachenzähne");
+        }
+        other => panic!("kein Haendler: {other:?}"),
+    }
+}

@@ -1,4 +1,4 @@
-use dnd_2d_map::config::Config;
+use dnd_2d_map::config::{Config, TILE_SIZE_M};
 use dnd_2d_map::edit::{Edit, GameState, PoiKind};
 use dnd_2d_map::gen;
 use dnd_2d_map::palette;
@@ -25,6 +25,15 @@ fn bilinear_elev(w: &World, fx: f32, fy: f32) -> f32 {
     let e0 = e00 + (e10 - e00) * tx;
     let e1 = e01 + (e11 - e01) * tx;
     e0 + (e1 - e0) * ty
+}
+
+fn height_m(e: f32, sea: f32, max_h: f32) -> f32 {
+    let d = e - sea;
+    if d >= 0.0 {
+        d / (1.0 - sea).max(0.01) * max_h
+    } else {
+        d * max_h
+    }
 }
 
 fn is_edge_tile(w: &World, x: usize, y: usize) -> bool {
@@ -119,6 +128,8 @@ struct MapApp {
     selected_screen: Option<egui::Pos2>,
     edit_name: String,
     edit_pop: u32,
+    edit_poi_name: String,
+    edit_poi_goods: String,
     map_name: Option<String>,
     dirty: bool,
     save_open: bool,
@@ -147,6 +158,8 @@ impl Default for MapApp {
             selected_screen: None,
             edit_name: String::new(),
             edit_pop: 0,
+            edit_poi_name: String::new(),
+            edit_poi_goods: String::new(),
             map_name: None,
             dirty: false,
             save_open: false,
@@ -165,9 +178,8 @@ impl MapApp {
     fn generate(&mut self) {
         let world = gen::generate(&self.cfg);
         let sea = self.cfg.sea_level;
-        let max_e = world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
         self.view.e_off = sea;
-        self.view.e_scale = (self.cfg.max_elevation_m / 3000.0) / (max_e - sea).max(0.01);
+        self.view.e_scale = self.cfg.max_elevation_m / TILE_SIZE_M;
         self.state = Some(GameState::new(world));
         self.rng = rng::edit_rng(self.cfg.seed);
         self.road_from = None;
@@ -244,9 +256,8 @@ impl MapApp {
                 self.selected = None;
                 let rev = state.revision;
                 let sea = self.cfg.sea_level;
-                let max_e = state.world.tiles.iter().map(|t| t.elevation).fold(0.0f32, f32::max);
                 self.view.e_off = sea;
-                self.view.e_scale = (self.cfg.max_elevation_m / 3000.0) / (max_e - sea).max(0.01);
+                self.view.e_scale = self.cfg.max_elevation_m / TILE_SIZE_M;
                 self.state = Some(state);
                 self.file_path = path.to_string();
                 self.map_name = p.file_stem().map(|s| s.to_string_lossy().to_string());
@@ -285,6 +296,22 @@ impl MapApp {
         if let Some(Some(s)) = data {
             self.edit_name = s.name;
             self.edit_pop = s.population;
+        }
+        let poi = sel.and_then(|(x, y)| {
+            self.state
+                .as_ref()
+                .map(|s| s.world.get(x, y).unwrap().poi.clone())
+        });
+        match poi {
+            Some(Some(Poi::Merchant { name, goods })) => {
+                self.edit_poi_name = name;
+                self.edit_poi_goods = goods;
+            }
+            Some(Some(Poi::Dungeon { name })) | Some(Some(Poi::Inn { name })) => {
+                self.edit_poi_name = name;
+                self.edit_poi_goods.clear();
+            }
+            _ => {}
         }
     }
 
@@ -400,7 +427,12 @@ impl MapApp {
         let w = &self.state.as_ref()?.world;
         let cx = w.width as f32 / 2.0;
         let cy = w.height as f32 / 2.0;
-        let (bx, by) = self.view.unproject(p, cx, cy, center, self.view.e_off);
+        let (mut bx, mut by) = self.view.unproject(p, cx, cy, center, 0.0);
+        if let Some(t0) = w.get(bx as usize, by as usize) {
+            let (rx, ry) = self.view.unproject(p, cx, cy, center, t0.elevation);
+            bx = rx;
+            by = ry;
+        }
         let mut best: Option<((usize, usize), f32)> = None;
         for dy in -2..=2i64 {
             for dx in -2..=2i64 {
@@ -410,7 +442,8 @@ impl MapApp {
                     continue;
                 }
                 let (x, y) = (tx as usize, ty as usize);
-                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, self.view.e_off, cx, cy, center);
+                let e = w.get(x, y).unwrap().elevation;
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
                 let spp = egui::pos2(sp.0, sp.1);
                 let d = spp.distance(egui::pos2(p.0, p.1));
                 if rect.contains(spp) && best.map_or(true, |(_, bd)| d < bd) {
@@ -442,7 +475,8 @@ impl MapApp {
                 if w.get(x, y).unwrap().settlement.is_none() {
                     continue;
                 }
-                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, self.view.e_off, cx, cy, center);
+                let e = w.get(x, y).unwrap().elevation;
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
                 let d = egui::pos2(sp.0, sp.1).distance(click);
                 if best.map_or(true, |(_, bd)| d < bd) {
                     best = Some(((x, y), d));
@@ -543,15 +577,33 @@ impl MapApp {
         let rect = response.rect;
         let center = (rect.center().x, rect.center().y);
 
-        let (middle_down, delta) = ui.input(|i| {
+        let (middle_down, delta, shift) = ui.input(|i| {
             (
                 i.pointer.button_down(egui::PointerButton::Middle),
                 i.pointer.delta(),
+                i.modifiers.shift,
             )
         });
+        let mouse = ui.input(|i| i.pointer.latest_pos());
+        let (mcx, mcy) = self
+            .state
+            .as_ref()
+            .map(|s| (s.world.width as f32 / 2.0, s.world.height as f32 / 2.0))
+            .unwrap_or((0.0, 0.0));
+        let pivot = match mouse {
+            Some(m) if rect.contains(m) => (m.x, m.y),
+            _ => center,
+        };
         if middle_down && response.hovered() {
-            self.view.pan.0 += delta.x;
-            self.view.pan.1 += delta.y;
+            if shift {
+                self.view.tilt_deg = (self.view.tilt_deg - delta.y * 0.25).clamp(0.0, 90.0);
+                if delta.x != 0.0 {
+                    self.view.rotate_at(pivot, mcx, mcy, center, delta.x * 0.25);
+                }
+            } else {
+                self.view.pan.0 += delta.x;
+                self.view.pan.1 += delta.y;
+            }
         }
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll != 0.0 {
@@ -561,9 +613,10 @@ impl MapApp {
                     let factor = (scroll * 0.0016).exp();
                     let anchor = self.tile_at(pp, center, rect).map(|t| {
                         let w = &self.state.as_ref().unwrap().world;
+                        let e = w.get(t.0, t.1).unwrap().elevation;
                         let cx = w.width as f32 / 2.0;
                         let cy = w.height as f32 / 2.0;
-                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, self.view.e_off, cx, cy, center)
+                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, e, cx, cy, center)
                     });
                     match anchor {
                         Some(sp) => self.view.zoom_at(pp, sp, center, factor),
@@ -573,10 +626,16 @@ impl MapApp {
             }
         }
         if ui.input(|i| i.key_pressed(egui::Key::Q)) {
-            self.view.rot_deg -= 6.0;
+            self.view.rotate_at(pivot, mcx, mcy, center, -6.0);
         }
         if ui.input(|i| i.key_pressed(egui::Key::E)) {
-            self.view.rot_deg += 6.0;
+            self.view.rotate_at(pivot, mcx, mcy, center, 6.0);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::ArrowUp)) {
+            self.view.tilt_deg = (self.view.tilt_deg + 6.0).clamp(0.0, 90.0);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::ArrowDown)) {
+            self.view.tilt_deg = (self.view.tilt_deg - 6.0).clamp(0.0, 90.0);
         }
 
         let cell = self.view.cell;
@@ -613,8 +672,8 @@ impl MapApp {
                 }
             }
 
-            let proj = |x: f32, y: f32, _e: f32| {
-                let sp = self.view.project(x, y, self.view.e_off, cx, cy, center);
+            let proj = |x: f32, y: f32, e: f32| {
+                let sp = self.view.project(x, y, e, cx, cy, center);
                 egui::pos2(sp.0, sp.1)
             };
 
@@ -633,13 +692,11 @@ impl MapApp {
                 let mut tiles: Vec<(f32, f32, [egui::Pos2; 4], usize, usize)> = Vec::new();
                 for y in 0..world.height {
                     for x in 0..world.width {
-                        let t = world.get(x, y).unwrap();
-                        let e = t.elevation;
                         let cs = [
-                            proj(x as f32, y as f32, e),
-                            proj(x as f32 + 1.0, y as f32, e),
-                            proj(x as f32 + 1.0, y as f32 + 1.0, e),
-                            proj(x as f32, y as f32 + 1.0, e),
+                            proj(x as f32, y as f32, bilinear_elev(world, x as f32, y as f32)),
+                            proj(x as f32 + 1.0, y as f32, bilinear_elev(world, x as f32 + 1.0, y as f32)),
+                            proj(x as f32 + 1.0, y as f32 + 1.0, bilinear_elev(world, x as f32 + 1.0, y as f32 + 1.0)),
+                            proj(x as f32, y as f32 + 1.0, bilinear_elev(world, x as f32, y as f32 + 1.0)),
                         ];
                         let min_x = cs.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
                         let max_x = cs.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
@@ -972,6 +1029,15 @@ impl eframe::App for MapApp {
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
                 ui.add(egui::Slider::new(&mut self.cfg.max_elevation_m, 500.0..=6000.0).text("Max. Berghöhe (m)"));
                 ui.add(egui::Slider::new(&mut self.cfg.treeline_m, 0.0..=5000.0).text("Baumgrenze (m)"));
+                ui.label(format!(
+                    "Kartenmaße: {}x{} Kacheln à {:.0} m (14 px) = {:.1} km x {:.1} km = {:.0} km²; max. Wassertiefe = sea_level x max. Berghöhe",
+                    self.cfg.width,
+                    self.cfg.height,
+                    TILE_SIZE_M,
+                    self.cfg.width as f32 * TILE_SIZE_M / 1000.0,
+                    self.cfg.height as f32 * TILE_SIZE_M / 1000.0,
+                    self.cfg.width as f32 * self.cfg.height as f32 * TILE_SIZE_M.powi(2) / 1e6
+                ));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.lapse_per_unit, 0.0..=100.0).text("Höhen-Lapse"));
@@ -1028,9 +1094,8 @@ impl eframe::App for MapApp {
                 ui.heading("Ansicht (2.5D)");
                 ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
                 ui.add(egui::Slider::new(&mut self.view.rot_deg, 0.0..=360.0).text("Drehung (°)"));
-                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 10.0..=90.0).text("Kippwinkel (°)"));
-                ui.add(egui::Slider::new(&mut self.view.hf, 0.0..=3.0).text("Höhenfaktor"));
-                ui.label("Mausrad = Zoom an Mausposition, mittlere Maustaste = ziehen, Q/E = drehen um die Mitte.");
+                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 0.0..=90.0).text("Kippwinkel (°)"));
+                ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste = Karte verschieben. Shift + mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
                     let e_scale = self.view.e_scale;
@@ -1070,11 +1135,17 @@ impl eframe::App for MapApp {
                 });
                 if let Some((hx, hy, t, tier)) = info {
                     ui.label(format!("Pos: ({hx}, {hy})"));
+                    let h_m = height_m(t.elevation, self.cfg.sea_level, self.cfg.max_elevation_m);
+                    let h_label = if h_m >= 0.0 {
+                        format!("Höhe: {:.0} m", h_m)
+                    } else {
+                        format!("Tiefe: {:.0} m", -h_m)
+                    };
                     ui.label(format!(
-                        "Biom: {}   Temp: {:.1} °C   Höhe: {:.0} m",
+                        "Biom: {}   Temp: {:.1} °C   {}",
                         t.effective_biome(),
                         t.temperature,
-                        (t.elevation - self.cfg.sea_level).max(0.0) * self.cfg.max_elevation_m
+                        h_label
                     ));
                     if t.is_water() {
                         ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
@@ -1130,11 +1201,17 @@ impl eframe::App for MapApp {
                             .map(|t| (t.clone(), st.world.settlement_tier(sel.0, sel.1)))
                     });
                     if let Some((t, tier)) = info {
+                        let h_m = height_m(t.elevation, self.cfg.sea_level, self.cfg.max_elevation_m);
+                        let h_label = if h_m >= 0.0 {
+                            format!("Höhe: {:.0} m", h_m)
+                        } else {
+                            format!("Tiefe: {:.0} m", -h_m)
+                        };
                         ui.label(format!(
-                            "Biom: {}   Temp: {:.1} °C   Höhe: {:.0} m",
+                            "Biom: {}   Temp: {:.1} °C   {}",
                             t.effective_biome(),
                             t.temperature,
-                            (t.elevation - self.cfg.sea_level).max(0.0) * self.cfg.max_elevation_m
+                            h_label
                         ));
                         if t.is_water() {
                             ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
@@ -1199,7 +1276,41 @@ impl eframe::App for MapApp {
                             }
                         }
                         if let Some(p) = &t.poi {
-                            ui.label(format!("POI: {p:?}"));
+                            let (kind_label, is_merchant) = match p {
+                                Poi::Dungeon { .. } => ("Dungeon", false),
+                                Poi::Inn { .. } => ("Gasthaus", false),
+                                Poi::Merchant { .. } => ("Händler", true),
+                            };
+                            ui.label(format!("POI: {kind_label}"));
+                            ui.horizontal(|ui| {
+                                ui.label("Name:");
+                                ui.text_edit_singleline(&mut self.edit_poi_name);
+                            });
+                            if is_merchant {
+                                ui.horizontal(|ui| {
+                                    ui.label("Waren:");
+                                    ui.text_edit_singleline(&mut self.edit_poi_goods);
+                                });
+                            }
+                            if ui.button("POI aktualisieren").clicked() {
+                                let state = self.state.as_mut().unwrap();
+                                state.apply(
+                                    Edit::UpdatePoi {
+                                        x: sel.0,
+                                        y: sel.1,
+                                        name: Some(self.edit_poi_name.clone()),
+                                        goods: if is_merchant {
+                                            Some(self.edit_poi_goods.clone())
+                                        } else {
+                                            None
+                                        },
+                                    },
+                                    &mut self.rng,
+                                );
+                                self.dirty = true;
+                                self.status =
+                                    format!("POI aktualisiert – Revision {}", state.revision);
+                            }
                         }
                         ui.label("Schließen: X oben rechts oder ESC.");
                     }

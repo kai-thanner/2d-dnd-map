@@ -40,6 +40,12 @@ pub enum Edit {
     AddRoad { from: (usize, usize), to: (usize, usize) },
     AddRiver { x: usize, y: usize },
     AddPoi { x: usize, y: usize, kind: PoiKind },
+    UpdatePoi {
+        x: usize,
+        y: usize,
+        name: Option<String>,
+        goods: Option<String>,
+    },
     SetBiome { x: usize, y: usize, biome: Biome },
 }
 
@@ -247,6 +253,27 @@ impl World {
                                 Poi::Merchant { name, goods }
                             }
                         });
+                    }
+                }
+            }
+            Edit::UpdatePoi { x, y, name, goods } => {
+                if let Some(t) = self.get_mut(*x, *y) {
+                    if let Some(p) = &mut t.poi {
+                        match p {
+                            Poi::Merchant { name: n, goods: g } => {
+                                if let Some(nn) = name {
+                                    *n = nn.clone();
+                                }
+                                if let Some(gg) = goods {
+                                    *g = gg.clone();
+                                }
+                            }
+                            Poi::Dungeon { name: n } | Poi::Inn { name: n } => {
+                                if let Some(nn) = name {
+                                    *n = nn.clone();
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -36,6 +36,9 @@ fn default_treeline_m() -> f32 {
     2000.0
 }
 
+/// Fester Massstab: 14 px (1 Kachel) = 1000 m. 100 Kacheln breit = 100 km breit.
+pub const TILE_SIZE_M: f32 = 1000.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub seed: u64,

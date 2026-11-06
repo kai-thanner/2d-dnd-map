@@ -92,6 +92,19 @@ const GOODS: &[&str] = &[
     "Lederwaren",
 ];
 
+const FAMOUS_MERCHANTS: &[&str] = &[
+    "Baron Kazimir Goldhand",
+    "Mira Sturmfeather",
+    "Gilbert der Weitgereiste",
+    "Sister Aurelia vom heiligen Markt",
+    "Volo Knochenkralle",
+    "Lady Seraphine Dreiblatt",
+];
+
+pub fn famous_merchant(rng: &mut StdRng) -> String {
+    FAMOUS_MERCHANTS.choose(rng).unwrap().to_string()
+}
+
 pub fn merchant(rng: &mut StdRng) -> (String, String) {
     (
         format!(
