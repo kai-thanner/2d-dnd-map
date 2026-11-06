@@ -639,71 +639,105 @@ impl MapApp {
                     );
                 }
             } else {
-                let mut tiles: Vec<(f32, f32, usize, usize)> = Vec::new();
+                let mut tiles: Vec<(f32, f32, [egui::Pos2; 4], usize, usize)> = Vec::new();
                 for y in 0..world.height {
                     for x in 0..world.width {
                         let t = world.get(x, y).unwrap();
-                        let sp = proj(x as f32, y as f32, t.elevation);
-                        if sp.x < rect.min.x - cell
-                            || sp.y < rect.min.y - cell
-                            || sp.x > rect.max.x + cell
-                            || sp.y > rect.max.y + cell
+                        let e = t.elevation;
+                        let cs = [
+                            proj(x as f32, y as f32, e),
+                            proj(x as f32 + 1.0, y as f32, e),
+                            proj(x as f32 + 1.0, y as f32 + 1.0, e),
+                            proj(x as f32, y as f32 + 1.0, e),
+                        ];
+                        let min_x = cs.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+                        let max_x = cs.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
+                        let min_y = cs.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+                        let max_y = cs.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
+                        let m = cell * 2.0 + 2.0;
+                        if max_x < rect.min.x - m
+                            || min_x > rect.max.x + m
+                            || max_y < rect.min.y - m
+                            || min_y > rect.max.y + m
                         {
                             continue;
                         }
                         let bp = proj(x as f32, y as f32, self.view.e_off);
-                        tiles.push((bp.y, bp.x, x, y));
+                        tiles.push((bp.y, bp.x, cs, x, y));
                     }
                 }
                 tiles.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)));
 
-                for (_, _, x, y) in &tiles {
+                let quad = |pts: [egui::Pos2; 4], col: egui::Color32| {
+                    painter.add(egui::Shape::convex_polygon(
+                        pts.to_vec(),
+                        col,
+                        egui::Stroke::new(0.7, col),
+                    ));
+                };
+
+                for (_, _, cs, x, y) in &tiles {
                     let (x, y) = (*x, *y);
+                    let [c00, c10, c11, c01] = *cs;
                     let t = world.get(x, y).unwrap();
                     let e = t.elevation;
-                    let sp = proj(x as f32, y as f32, e);
                     if ca > 0.08 {
-                        let e_south = if y + 1 < world.height {
-                            world.get(x, y + 1).unwrap().elevation
-                        } else {
-                            self.view.e_off
-                        };
-                        let dh = self.view.disp_e(e) - self.view.disp_e(e_south);
-                        if dh > 0.0 {
-                            let ts = proj(x as f32, (y + 1) as f32, e);
-                            let te = proj((x + 1) as f32, (y + 1) as f32, e);
-                            let bs = proj(x as f32, (y + 1) as f32, e_south);
-                            let be = proj((x + 1) as f32, (y + 1) as f32, e_south);
-                            let (r, g, b) = palette::biome_rgb(t.effective_biome());
-                            let col = egui::Color32::from_rgb(
-                                (r as f32 * 0.45) as u8,
-                                (g as f32 * 0.45) as u8,
-                                (b as f32 * 0.45) as u8,
-                            );
-                            painter.add(egui::Shape::convex_polygon(
-                                vec![ts, te, be, bs],
-                                col,
-                                egui::Stroke::NONE,
-                            ));
+                        let (r, g, b) = palette::biome_rgb(t.effective_biome());
+                        let wall_col = egui::Color32::from_rgb(
+                            (r as f32 * 0.45) as u8,
+                            (g as f32 * 0.45) as u8,
+                            (b as f32 * 0.45) as u8,
+                        );
+                        let sides: [((f32, f32), (f32, f32), i64, i64); 4] = [
+                            ((x as f32, y as f32), (x as f32 + 1.0, y as f32), 0, -1),
+                            ((x as f32 + 1.0, y as f32), (x as f32 + 1.0, y as f32 + 1.0), 1, 0),
+                            ((x as f32 + 1.0, y as f32 + 1.0), (x as f32, y as f32 + 1.0), 0, 1),
+                            ((x as f32, y as f32 + 1.0), (x as f32, y as f32), -1, 0),
+                        ];
+                        for ((ax, ay), (bx, by), dx, dy) in sides {
+                            let nx = x as i64 + dx;
+                            let ny = y as i64 + dy;
+                            let e_n = if nx >= 0 && ny >= 0 && world.in_bounds(nx as usize, ny as usize) {
+                                world.get(nx as usize, ny as usize).unwrap().elevation
+                            } else {
+                                self.view.e_off
+                            };
+                            let dh = self.view.disp_e(e) - self.view.disp_e(e_n);
+                            if dh > 0.0 {
+                                quad(
+                                    [
+                                        proj(ax, ay, e),
+                                        proj(bx, by, e),
+                                        proj(bx, by, e_n),
+                                        proj(ax, ay, e_n),
+                                    ],
+                                    wall_col,
+                                );
+                            }
                         }
                     }
                     if cell >= 8.0 && is_edge_tile(world, x, y) {
-                        let sz = cell / SUB as f32 + 0.5;
                         for sy in 0..SUB {
                             for sx in 0..SUB {
-                                let fx = x as f32 + (sx as f32 + 0.5) / SUB as f32;
-                                let fy = y as f32 + (sy as f32 + 0.5) / SUB as f32;
-                                let e_sub = bilinear_elev(world, fx, fy);
-                                let sp_sub = proj(fx, fy, e_sub);
+                                let fx0 = x as f32 + sx as f32 / SUB as f32;
+                                let fy0 = y as f32 + sy as f32 / SUB as f32;
+                                let fx1 = x as f32 + (sx + 1) as f32 / SUB as f32;
+                                let fy1 = y as f32 + (sy + 1) as f32 / SUB as f32;
+                                let e_sub = bilinear_elev(world, (fx0 + fx1) * 0.5, (fy0 + fy1) * 0.5);
                                 let (r, g, b) = if e_sub < world.sea_level {
                                     palette::biome_rgb(Biome::Ocean)
                                 } else {
                                     palette::shade_rgb(world, x, y, palette::biome_rgb(t.biome))
                                 };
-                                painter.rect_filled(
-                                    egui::Rect::from_min_size(sp_sub, egui::vec2(sz, sz)),
-                                    0.0,
-                                    egui::Color32::from_rgb(r, g, b),
+                                let col = egui::Color32::from_rgb(r, g, b);
+                                quad(
+                                    [
+                                        proj(fx0, fy0, bilinear_elev(world, fx0, fy0)),
+                                        proj(fx1, fy0, bilinear_elev(world, fx1, fy0)),
+                                        proj(fx1, fy1, bilinear_elev(world, fx1, fy1)),
+                                        proj(fx0, fy1, bilinear_elev(world, fx0, fy1)),
+                                    ],
+                                    col,
                                 );
                             }
                         }
@@ -714,11 +748,7 @@ impl MapApp {
                             y,
                             palette::biome_rgb(t.effective_biome()),
                         );
-                        painter.rect_filled(
-                            egui::Rect::from_min_size(sp, egui::vec2(cell, cell)),
-                            0.0,
-                            egui::Color32::from_rgb(r, g, b),
-                        );
+                        quad([c00, c10, c11, c01], egui::Color32::from_rgb(r, g, b));
                     }
                 }
 
@@ -850,12 +880,17 @@ impl MapApp {
 
             let mark = |pos: (usize, usize), col: egui::Color32| {
                 let t = world.get(pos.0, pos.1).unwrap();
-                let sp = proj(pos.0 as f32, pos.1 as f32, t.elevation);
-                painter.rect_filled(
-                    egui::Rect::from_min_size(sp, egui::vec2(cell, cell)),
-                    0.0,
+                let e = t.elevation;
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        proj(pos.0 as f32, pos.1 as f32, e),
+                        proj(pos.0 as f32 + 1.0, pos.1 as f32, e),
+                        proj(pos.0 as f32 + 1.0, pos.1 as f32 + 1.0, e),
+                        proj(pos.0 as f32, pos.1 as f32 + 1.0, e),
+                    ],
                     col,
-                );
+                    egui::Stroke::NONE,
+                ));
             };
             if let Some(pos) = road_from {
                 mark(pos, egui::Color32::from_rgba_premultiplied(255, 60, 60, 110));
