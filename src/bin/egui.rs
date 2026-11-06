@@ -400,12 +400,7 @@ impl MapApp {
         let w = &self.state.as_ref()?.world;
         let cx = w.width as f32 / 2.0;
         let cy = w.height as f32 / 2.0;
-        let (mut bx, mut by) = self.view.unproject(p, cx, cy, center, 0.0);
-        if let Some(t0) = w.get(bx as usize, by as usize) {
-            let (rx, ry) = self.view.unproject(p, cx, cy, center, t0.elevation);
-            bx = rx;
-            by = ry;
-        }
+        let (bx, by) = self.view.unproject(p, cx, cy, center, self.view.e_off);
         let mut best: Option<((usize, usize), f32)> = None;
         for dy in -2..=2i64 {
             for dx in -2..=2i64 {
@@ -415,8 +410,7 @@ impl MapApp {
                     continue;
                 }
                 let (x, y) = (tx as usize, ty as usize);
-                let e = w.get(x, y).unwrap().elevation;
-                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, self.view.e_off, cx, cy, center);
                 let spp = egui::pos2(sp.0, sp.1);
                 let d = spp.distance(egui::pos2(p.0, p.1));
                 if rect.contains(spp) && best.map_or(true, |(_, bd)| d < bd) {
@@ -448,8 +442,7 @@ impl MapApp {
                 if w.get(x, y).unwrap().settlement.is_none() {
                     continue;
                 }
-                let e = w.get(x, y).unwrap().elevation;
-                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, e, cx, cy, center);
+                let sp = self.view.project(x as f32 + 0.5, y as f32 + 0.5, self.view.e_off, cx, cy, center);
                 let d = egui::pos2(sp.0, sp.1).distance(click);
                 if best.map_or(true, |(_, bd)| d < bd) {
                     best = Some(((x, y), d));
@@ -568,10 +561,9 @@ impl MapApp {
                     let factor = (scroll * 0.0016).exp();
                     let anchor = self.tile_at(pp, center, rect).map(|t| {
                         let w = &self.state.as_ref().unwrap().world;
-                        let e = w.get(t.0, t.1).unwrap().elevation;
                         let cx = w.width as f32 / 2.0;
                         let cy = w.height as f32 / 2.0;
-                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, e, cx, cy, center)
+                        self.view.project(t.0 as f32 + 0.5, t.1 as f32 + 0.5, self.view.e_off, cx, cy, center)
                     });
                     match anchor {
                         Some(sp) => self.view.zoom_at(pp, sp, center, factor),
@@ -590,7 +582,6 @@ impl MapApp {
         let cell = self.view.cell;
         let road_from = self.road_from;
         let selected = self.selected;
-        let ca = self.view.tilt_deg.to_radians().cos();
         let fast = self.view.tilt_deg >= 89.9 && (self.view.rot_deg % 360.0).abs() < 0.01;
 
         self.ensure_texture(ui.ctx());
@@ -622,8 +613,8 @@ impl MapApp {
                 }
             }
 
-            let proj = |x: f32, y: f32, e: f32| {
-                let sp = self.view.project(x, y, e, cx, cy, center);
+            let proj = |x: f32, y: f32, _e: f32| {
+                let sp = self.view.project(x, y, self.view.e_off, cx, cy, center);
                 egui::pos2(sp.0, sp.1)
             };
 
@@ -680,42 +671,6 @@ impl MapApp {
                     let (x, y) = (*x, *y);
                     let [c00, c10, c11, c01] = *cs;
                     let t = world.get(x, y).unwrap();
-                    let e = t.elevation;
-                    if ca > 0.08 {
-                        let (r, g, b) = palette::biome_rgb(t.effective_biome());
-                        let wall_col = egui::Color32::from_rgb(
-                            (r as f32 * 0.45) as u8,
-                            (g as f32 * 0.45) as u8,
-                            (b as f32 * 0.45) as u8,
-                        );
-                        let sides: [((f32, f32), (f32, f32), i64, i64); 4] = [
-                            ((x as f32, y as f32), (x as f32 + 1.0, y as f32), 0, -1),
-                            ((x as f32 + 1.0, y as f32), (x as f32 + 1.0, y as f32 + 1.0), 1, 0),
-                            ((x as f32 + 1.0, y as f32 + 1.0), (x as f32, y as f32 + 1.0), 0, 1),
-                            ((x as f32, y as f32 + 1.0), (x as f32, y as f32), -1, 0),
-                        ];
-                        for ((ax, ay), (bx, by), dx, dy) in sides {
-                            let nx = x as i64 + dx;
-                            let ny = y as i64 + dy;
-                            let e_n = if nx >= 0 && ny >= 0 && world.in_bounds(nx as usize, ny as usize) {
-                                world.get(nx as usize, ny as usize).unwrap().elevation
-                            } else {
-                                self.view.e_off
-                            };
-                            let dh = self.view.disp_e(e) - self.view.disp_e(e_n);
-                            if dh > 0.0 {
-                                quad(
-                                    [
-                                        proj(ax, ay, e),
-                                        proj(bx, by, e),
-                                        proj(bx, by, e_n),
-                                        proj(ax, ay, e_n),
-                                    ],
-                                    wall_col,
-                                );
-                            }
-                        }
-                    }
                     if cell >= 8.0 && is_edge_tile(world, x, y) {
                         for sy in 0..SUB {
                             for sx in 0..SUB {
