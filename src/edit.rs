@@ -155,7 +155,11 @@ impl World {
             Edit::DrainLake { x, y, radius } => {
                 for (px, py) in self.tiles_in_radius(*x, *y, *radius) {
                     let t = self.get_mut(px, py).unwrap();
-                    if matches!(t.water, Some(WaterKind::Lake) | Some(WaterKind::River)) {
+                    if matches!(
+                        t.water,
+                        Some(WaterKind::Lake) | Some(WaterKind::River) | Some(WaterKind::Ice)
+                    ) || t.river
+                    {
                         t.water = None;
                         t.river = false;
                         t.river_width = 0;
@@ -166,13 +170,16 @@ impl World {
             Edit::Flood { x, y, radius } => {
                 for (px, py) in self.tiles_in_radius(*x, *y, *radius) {
                     let t = self.get_mut(px, py).unwrap();
-                    if t.water.is_none()
-                        && t.is_passable()
-                        && !matches!(t.biome, Biome::Rock)
-                    {
+                    if matches!(t.water, Some(WaterKind::Ocean) | Some(WaterKind::Ice)) {
+                        continue;
+                    }
+                    if t.is_passable() && !matches!(t.biome, Biome::Rock) {
                         t.water = Some(WaterKind::Lake);
+                        t.river = false;
+                        t.river_width = 0;
                     }
                 }
+                rivers::recompute_river_widths(self);
             }
             Edit::AddRoad { from, to } => {
                 if let Some(path) = roads::carve_path(self, *from, *to) {

@@ -17,6 +17,14 @@ impl Default for Climate {
     }
 }
 
+fn default_dry_south() -> f32 {
+    0.45
+}
+
+fn default_river_amount() -> f32 {
+    1.0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub seed: u64,
@@ -24,6 +32,10 @@ pub struct Config {
     pub height: usize,
     pub sea_level: f32,
     pub moisture_scale: f32,
+    #[serde(default = "default_dry_south")]
+    pub dry_south: f32,
+    #[serde(default = "default_river_amount")]
+    pub river_amount: f32,
     pub settlement_density: f32,
     pub climate: Climate,
 }
@@ -36,6 +48,8 @@ impl Default for Config {
             height: 60,
             sea_level: 0.42,
             moisture_scale: 0.6,
+            dry_south: default_dry_south(),
+            river_amount: default_river_amount(),
             settlement_density: 0.5,
             climate: Climate::default(),
         }

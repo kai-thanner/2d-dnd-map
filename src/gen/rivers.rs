@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::noise::Noise;
 use crate::world::World;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -18,7 +19,11 @@ pub fn carve(w: &mut World, cfg: &Config) {
         let eb = w.get(b.0, b.1).unwrap().elevation;
         eb.partial_cmp(&ea).unwrap()
     });
-    let n_rivers = ((w.width * w.height) as f32 / 1200.0).max(3.0) as usize;
+    let n_rivers = if cfg.river_amount <= 0.0 {
+        0
+    } else {
+        (((w.width * w.height) as f32 / 1800.0) * cfg.river_amount).max(3.0) as usize
+    };
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     for s in sources {
         if chosen.len() >= n_rivers {
@@ -35,6 +40,9 @@ pub fn carve(w: &mut World, cfg: &Config) {
 }
 
 pub fn carve_downhill(w: &mut World, sea_level: f32, start: (usize, usize)) -> Vec<(usize, usize)> {
+    let jitter = Noise::new(
+        0xBEEF_5EED ^ ((start.0 as u64) << 12) ^ (start.1 as u64),
+    );
     let mut visited: HashSet<(usize, usize)> = HashSet::new();
     let mut path: Vec<(usize, usize)> = Vec::new();
     let mut cur = start;
@@ -46,18 +54,21 @@ pub fn carve_downhill(w: &mut World, sea_level: f32, start: (usize, usize)) -> V
             break;
         }
         path.push(cur);
-        if path.len() > 600 {
+        if path.len() > 350 {
             break;
         }
+        let cur_e = w.get(cur.0, cur.1).unwrap().elevation;
         let mut next: Option<(usize, usize)> = None;
-        let mut next_e = f32::INFINITY;
+        let mut next_score = f32::INFINITY;
         for n in w.neighbors8(cur.0, cur.1) {
             if visited.contains(&n) {
                 continue;
             }
             let e = w.get(n.0, n.1).unwrap().elevation;
-            if e < next_e {
-                next_e = e;
+            let uphill = (e - cur_e).max(0.0) * 3.0;
+            let score = e + uphill + jitter.fbm(n.0 as f32 * 0.55, n.1 as f32 * 0.55, 2) * 0.035;
+            if score < next_score {
+                next_score = score;
                 next = Some(n);
             }
         }

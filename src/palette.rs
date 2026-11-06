@@ -1,4 +1,4 @@
-use crate::world::Biome;
+use crate::world::{Biome, World};
 
 pub fn biome_rgb(b: Biome) -> (u8, u8, u8) {
     match b {
@@ -31,4 +31,30 @@ pub fn cell_at(px: f32, py: f32, cell: f32, width: usize, height: usize) -> Opti
     } else {
         None
     }
+}
+
+pub fn hillshade(w: &World, x: usize, y: usize) -> f32 {
+    let e = w.get(x, y).unwrap().elevation;
+    let el = if x > 0 { w.get(x - 1, y).unwrap().elevation } else { e };
+    let er = if x + 1 < w.width { w.get(x + 1, y).unwrap().elevation } else { e };
+    let eu = if y > 0 { w.get(x, y - 1).unwrap().elevation } else { e };
+    let ed = if y + 1 < w.height { w.get(x, y + 1).unwrap().elevation } else { e };
+    let dzdx = (er - el) / 2.0 * 6.0;
+    let dzdy = (ed - eu) / 2.0 * 6.0;
+    let lx = -0.55f32;
+    let ly = -0.55;
+    let lz = 0.75;
+    let ll = (lx * lx + ly * ly + lz * lz).sqrt();
+    let nl = (1.0 + dzdx * dzdx + dzdy * dzdy).sqrt();
+    let dot = (-dzdx * lx / ll - dzdy * ly / ll + lz / ll) / nl;
+    (0.55 + 0.5 * dot.clamp(0.0, 1.0)).clamp(0.35, 1.15)
+}
+
+pub fn shade_rgb(w: &World, x: usize, y: usize, rgb: (u8, u8, u8)) -> (u8, u8, u8) {
+    let s = hillshade(w, x, y);
+    (
+        (rgb.0 as f32 * s).min(255.0) as u8,
+        (rgb.1 as f32 * s).min(255.0) as u8,
+        (rgb.2 as f32 * s).min(255.0) as u8,
+    )
 }

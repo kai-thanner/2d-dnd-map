@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::names;
-use crate::world::{Biome, Settlement, World};
+use crate::world::{Biome, Settlement, WaterKind, World};
 use rand::rngs::StdRng;
 use rand::RngExt;
 use std::ops::Range;
@@ -17,6 +17,69 @@ pub fn place(w: &mut World, cfg: &Config, rng: &mut StdRng) {
     let n_small = (cfg.settlement_density * 16.0).round() as usize;
     place_range(w, rng, n_big, 2000..50000, true, 10.0);
     place_range(w, rng, n_small, 40..1500, false, 5.0);
+    ensure_harbors(w);
+}
+
+fn ensure_harbors(w: &mut World) {
+    let sea = w.sea_level;
+    let mut visited = vec![false; w.tiles.len()];
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let i = w.idx(x, y);
+            if visited[i] || w.tiles[i].elevation < sea {
+                continue;
+            }
+            let mut comp: Vec<(usize, usize)> = Vec::new();
+            let mut stack = vec![(x, y)];
+            visited[i] = true;
+            while let Some((cx, cy)) = stack.pop() {
+                comp.push((cx, cy));
+                for n in w.neighbors4(cx, cy) {
+                    let ni = w.idx(n.0, n.1);
+                    if !visited[ni] && w.tiles[ni].elevation >= sea {
+                        visited[ni] = true;
+                        stack.push(n);
+                    }
+                }
+            }
+            let setts: Vec<(usize, usize)> = comp
+                .iter()
+                .filter(|(cx, cy)| w.get(*cx, *cy).unwrap().settlement.is_some())
+                .cloned()
+                .collect();
+            if setts.is_empty() {
+                continue;
+            }
+            let total_pop: u64 = setts
+                .iter()
+                .map(|s| w.get(s.0, s.1).unwrap().settlement.as_ref().unwrap().population as u64)
+                .sum();
+            if total_pop < 2000 {
+                continue;
+            }
+            let n_harbors = ((total_pop / 25_000).max(1) as usize).min(setts.len());
+            let mut coastal = setts.clone();
+            coastal.sort_by_key(|s| {
+                let ocean_n = w
+                    .neighbors8(s.0, s.1)
+                    .iter()
+                    .filter(|n| w.get(n.0, n.1).unwrap().water == Some(WaterKind::Ocean))
+                    .count();
+                std::cmp::Reverse(ocean_n)
+            });
+            for s in coastal.iter().take(n_harbors) {
+                if !w.near_ocean(s.0, s.1) {
+                    continue;
+                }
+                let t = w.get_mut(s.0, s.1).unwrap();
+                if let Some(st) = &mut t.settlement {
+                    if st.population <= 2000 {
+                        st.population = 2500;
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn place_range(

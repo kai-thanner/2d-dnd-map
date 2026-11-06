@@ -88,6 +88,7 @@ struct MapApp {
     pan: egui::Vec2,
     hover: Option<(usize, usize)>,
     selected: Option<(usize, usize)>,
+    selected_screen: Option<egui::Pos2>,
     edit_for: Option<(usize, usize)>,
     edit_name: String,
     edit_pop: u32,
@@ -115,6 +116,7 @@ impl Default for MapApp {
             pan: egui::vec2(8.0, 8.0),
             hover: None,
             selected: None,
+            selected_screen: None,
             edit_for: None,
             edit_name: String::new(),
             edit_pop: 0,
@@ -437,22 +439,24 @@ impl MapApp {
                     let t = world.get(x, y).unwrap();
                     let c0 = origin + egui::vec2(x as f32 * cell, y as f32 * cell);
                     let cell_rect = egui::Rect::from_min_size(c0, egui::vec2(cell, cell));
-                    let (r, g, b) = palette::biome_rgb(t.effective_biome());
+                    let (r, g, b) = palette::shade_rgb(world, x, y, palette::biome_rgb(t.effective_biome()));
                     painter.rect_filled(cell_rect, 0.0, egui::Color32::from_rgb(r, g, b));
                 }
             }
 
-            let (rr, rg, rb) = palette::biome_rgb(Biome::River);
-            let river_col = egui::Color32::from_rgb(rr, rg, rb);
             for y in y0..y1 {
                 for x in x0..x1 {
                     let t = world.get(x, y).unwrap();
                     if t.water != Some(WaterKind::River) && !t.river {
                         continue;
                     }
+                    let (rr, rg, rb) =
+                        palette::shade_rgb(world, x, y, palette::biome_rgb(Biome::River));
                     let wdt = t.river_width.max(1) as f32;
-                    let stroke =
-                        egui::Stroke::new((cell * 0.14 * wdt).clamp(1.5, cell * 0.9), river_col);
+                    let stroke = egui::Stroke::new(
+                        (cell * 0.14 * wdt).clamp(1.5, cell * 0.9),
+                        egui::Color32::from_rgb(rr, rg, rb),
+                    );
                     let center =
                         origin + egui::vec2((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
                     for (nx, ny) in world.neighbors8(x, y) {
@@ -538,6 +542,29 @@ impl MapApp {
             if let Some(pos) = hover_cell {
                 mark(pos, egui::Color32::from_white_alpha(70));
             }
+
+            let nc = rect.min + egui::vec2(rect.width() - 56.0, 10.0);
+            let ncenter = nc + egui::vec2(20.0, 20.0);
+            painter.circle_filled(ncenter, 17.0, egui::Color32::from_white_alpha(210));
+            painter.line_segment(
+                [ncenter + egui::vec2(0.0, 11.0), ncenter - egui::vec2(0.0, 6.0)],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
+            painter.line_segment(
+                [ncenter - egui::vec2(0.0, 6.0), ncenter + egui::vec2(-5.0, 1.0)],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
+            painter.line_segment(
+                [ncenter - egui::vec2(0.0, 6.0), ncenter + egui::vec2(5.0, 1.0)],
+                egui::Stroke::new(2.5, egui::Color32::BLACK),
+            );
+            painter.text(
+                ncenter + egui::vec2(0.0, 13.0),
+                egui::Align2::CENTER_CENTER,
+                "N",
+                egui::FontId::proportional(11.0),
+                egui::Color32::BLACK,
+            );
         }
 
         self.hover = hover_cell;
@@ -547,8 +574,9 @@ impl MapApp {
         if let Some(pos) = primary_cell {
             if self.tool == Tool::Select {
                 self.selected = Some(pos);
+                self.selected_screen = ui.input(|i| i.pointer.latest_pos());
                 self.sync_edit_buffers();
-                self.status = format!("Kachel ({}, {}) ausgewählt.", pos.0, pos.1);
+                self.status = format!("Kachel ({}, {}) ausgewählt – ESC wählt ab.", pos.0, pos.1);
             } else {
                 self.apply_tool(pos);
             }
@@ -560,6 +588,12 @@ impl eframe::App for MapApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
             self.undo();
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.selected.is_some() {
+            self.selected = None;
+            self.selected_screen = None;
+            self.sync_edit_buffers();
+            self.status = "Auswahl aufgehoben (ESC).".to_string();
         }
 
         egui::containers::Panel::top("menubar").show(ui, |ui| {
@@ -613,6 +647,8 @@ impl eframe::App for MapApp {
                 });
                 ui.add(egui::Slider::new(&mut self.cfg.sea_level, 0.0..=1.0).text("Wasser (sea_level)"));
                 ui.add(egui::Slider::new(&mut self.cfg.moisture_scale, 0.0..=1.0).text("Feuchtigkeit"));
+                ui.add(egui::Slider::new(&mut self.cfg.dry_south, 0.0..=1.0).text("Trockenheit Süden (Wüste)"));
+                ui.add(egui::Slider::new(&mut self.cfg.river_amount, 0.0..=2.0).text("Flussmenge"));
                 ui.add(egui::Slider::new(&mut self.cfg.settlement_density, 0.0..=1.0).text("Besiedelung"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.south_temp, -40.0..=40.0).text("Temp Süden (°C)"));
                 ui.add(egui::Slider::new(&mut self.cfg.climate.north_temp, -40.0..=40.0).text("Temp Norden (°C)"));
@@ -690,7 +726,7 @@ impl eframe::App for MapApp {
 
                 ui.separator();
                 ui.heading("Kachel-Info");
-                let info_pos = self.selected.or(self.hover);
+                let info_pos = self.hover;
                 let info = info_pos.and_then(|(x, y)| {
                     self.state.as_ref().map(|s| {
                         (
@@ -765,6 +801,78 @@ impl eframe::App for MapApp {
         egui::containers::Panel::bottom("statusbar").show(ui, |ui| {
             ui.label(&self.status);
         });
+
+        if let Some(sel) = self.selected {
+            let mut open = true;
+            let pos = self.selected_screen.unwrap_or(egui::pos2(220.0, 120.0));
+            egui::Window::new(format!("Kachel ({}, {})", sel.0, sel.1))
+                .open(&mut open)
+                .fixed_pos(pos)
+                .show(ui.ctx(), |ui| {
+                    let info = self.state.as_ref().and_then(|st| {
+                        st.world
+                            .get(sel.0, sel.1)
+                            .map(|t| (t.clone(), st.world.settlement_tier(sel.0, sel.1)))
+                    });
+                    if let Some((t, tier)) = info {
+                        ui.label(format!("Biom: {}   Temp: {:.1} °C", t.effective_biome(), t.temperature));
+                        if t.is_water() {
+                            ui.label(format!("Wasser-Layer: {:?} – darunter: {}", t.water, t.biome));
+                        }
+                        ui.label(format!(
+                            "Höhe: {:.3}   Feuchte: {:.2}",
+                            t.elevation, t.moisture
+                        ));
+                        ui.label(format!(
+                            "Straße: {}   Fluss: {} (Breite {})   POI: {}",
+                            t.road,
+                            t.river,
+                            t.river_width,
+                            t.poi.is_some()
+                        ));
+                        if let Some(s) = &t.settlement {
+                            ui.label(format!(
+                                "Siedlung: {} – {} ({} Einwohner)",
+                                tier.map(|t| t.name()).unwrap_or("?"),
+                                s.name,
+                                s.population
+                            ));
+                            ui.horizontal(|ui| {
+                                ui.label("Name:");
+                                ui.text_edit_singleline(&mut self.edit_name);
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Einwohner:");
+                                ui.add(egui::DragValue::new(&mut self.edit_pop).range(1..=1_000_000u32));
+                            });
+                            if ui.button("Siedlung aktualisieren").clicked() {
+                                let state = self.state.as_mut().unwrap();
+                                state.apply(
+                                    Edit::UpdateSettlement {
+                                        x: sel.0,
+                                        y: sel.1,
+                                        name: Some(self.edit_name.clone()),
+                                        population: Some(self.edit_pop),
+                                    },
+                                    &mut self.rng,
+                                );
+                                self.dirty = true;
+                                self.status =
+                                    format!("Siedlung aktualisiert – Revision {}", state.revision);
+                            }
+                        }
+                        if let Some(p) = &t.poi {
+                            ui.label(format!("POI: {p:?}"));
+                        }
+                        ui.label("Schließen: X oben rechts oder ESC.");
+                    }
+                });
+            if !open {
+                self.selected = None;
+                self.selected_screen = None;
+                self.sync_edit_buffers();
+            }
+        }
 
         if self.save_open {
             let mut open = true;

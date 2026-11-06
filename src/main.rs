@@ -40,6 +40,10 @@ struct GenerateArgs {
     sea_level: f32,
     #[arg(long, default_value_t = 0.6)]
     moisture: f32,
+    #[arg(long, default_value_t = 0.45)]
+    dry_south: f32,
+    #[arg(long, default_value_t = 1.0)]
+    river_amount: f32,
     #[arg(long, default_value_t = 0.5)]
     settlements: f32,
     #[arg(long, default_value_t = 28.0)]
@@ -98,6 +102,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 height: a.height,
                 sea_level: a.sea_level,
                 moisture_scale: a.moisture,
+                dry_south: a.dry_south,
+                river_amount: a.river_amount,
                 settlement_density: a.settlements,
                 climate: Climate {
                     south_temp: a.south_temp,
