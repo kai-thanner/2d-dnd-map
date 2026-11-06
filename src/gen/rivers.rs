@@ -158,3 +158,14 @@ fn width_of(
     memo.insert(r, v);
     v
 }
+
+pub fn carve_valleys(w: &mut World, sea_level: f32) {
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let t = w.get_mut(x, y).unwrap();
+            if t.river {
+                t.elevation = (t.elevation - 0.05).max(sea_level + 0.01);
+            }
+        }
+    }
+}

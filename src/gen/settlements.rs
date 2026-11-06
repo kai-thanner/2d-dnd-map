@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::names;
-use crate::world::{Biome, Settlement, WaterKind, World};
+use crate::world::{Biome, Settlement, World};
 use rand::rngs::StdRng;
 use rand::RngExt;
 use std::ops::Range;
@@ -54,26 +54,15 @@ fn ensure_harbors(w: &mut World) {
                 .iter()
                 .map(|s| w.get(s.0, s.1).unwrap().settlement.as_ref().unwrap().population as u64)
                 .sum();
-            if total_pop < 2000 {
-                continue;
-            }
             let n_harbors = ((total_pop / 25_000).max(1) as usize).min(setts.len());
+            let dist = water_dist_map(w, &comp);
             let mut coastal = setts.clone();
-            coastal.sort_by_key(|s| {
-                let ocean_n = w
-                    .neighbors8(s.0, s.1)
-                    .iter()
-                    .filter(|n| w.get(n.0, n.1).unwrap().water == Some(WaterKind::Ocean))
-                    .count();
-                std::cmp::Reverse(ocean_n)
-            });
+            coastal.sort_by_key(|s| dist.get(&w.idx(s.0, s.1)).copied().unwrap_or(u32::MAX));
             for s in coastal.iter().take(n_harbors) {
-                if !w.near_ocean(s.0, s.1) {
-                    continue;
-                }
                 let t = w.get_mut(s.0, s.1).unwrap();
                 if let Some(st) = &mut t.settlement {
-                    if st.population <= 2000 {
+                    st.has_port = true;
+                    if total_pop >= 2000 && st.population <= 2000 {
                         st.population = 2500;
                     }
                 }
@@ -117,9 +106,38 @@ fn place_range(
         }
         let population = rng.random_range(pop_range.clone());
         let name = names::settlement(rng, population, w.near_ocean(x, y));
+        let has_port = w.near_port_water(x, y);
         let t = w.get_mut(x, y).unwrap();
-        t.settlement = Some(Settlement { name, population });
+        t.settlement = Some(Settlement {
+            name,
+            population,
+            has_port,
+        });
         points.push((x, y));
         placed += 1;
     }
+}
+
+fn water_dist_map(w: &World, comp: &[(usize, usize)]) -> std::collections::HashMap<usize, u32> {
+    let mut dist: std::collections::HashMap<usize, u32> = std::collections::HashMap::new();
+    let mut stack: Vec<(usize, usize, u32)> = Vec::new();
+    for (cx, cy) in comp {
+        if w.neighbors8(*cx, *cy)
+            .iter()
+            .any(|n| World::is_port_water_tile(w.get(n.0, n.1).unwrap()))
+        {
+            stack.push((*cx, *cy, 0));
+        }
+    }
+    while let Some((x, y, d)) = stack.pop() {
+        let i = w.idx(x, y);
+        if dist.contains_key(&i) {
+            continue;
+        }
+        dist.insert(i, d);
+        for n in w.neighbors4(x, y) {
+            stack.push((n.0, n.1, d + 1));
+        }
+    }
+    dist
 }

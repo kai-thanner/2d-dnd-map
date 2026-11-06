@@ -45,7 +45,8 @@ impl AsciiRenderer {
         ] {
             s.push_str(&format!("  {} {}\n", Self::biome_char(b), b.name()));
         }
-        s.push_str("  = Straße   g Gehöft   v Dorf   t Kleinstadt   C Stadt   M Kaiserstadt   H Hafenstadt   D Dungeon   I Gasthaus   M Händler\n");
+        s.push_str("  = Straße   S Siedlung (Größe/Farbe = Stufe; GUI: blauer Ring = Hafen)   D Dungeon   I Gasthaus   M Händler
+");
         s
     }
 }
@@ -56,8 +57,8 @@ impl Renderer for AsciiRenderer {
         for y in 0..world.height {
             for x in 0..world.width {
                 let t = world.get(x, y).unwrap();
-                let c = if let Some(tier) = world.settlement_tier(x, y) {
-                    tier.marker()
+                let c = if world.settlement_tier(x, y).is_some() {
+                    'S'
                 } else if let Some(p) = &t.poi {
                     match p {
                         Poi::Dungeon { .. } => 'D',

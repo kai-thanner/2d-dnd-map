@@ -391,6 +391,10 @@ impl MapApp {
                     let world_pos = (p - rect.min - self.pan) / self.cell;
                     self.pan = (p - rect.min) - world_pos * new_cell;
                     self.cell = new_cell;
+                    if !self.pan.is_finite() || !self.cell.is_finite() {
+                        self.pan = egui::vec2(8.0, 8.0);
+                        self.cell = 10.0;
+                    }
                 }
             }
         }

@@ -147,6 +147,8 @@ impl SettlementTier {
 pub struct Settlement {
     pub name: String,
     pub population: u32,
+    #[serde(default)]
+    pub has_port: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -300,6 +302,30 @@ impl World {
             }
         }
         out
+    }
+
+    pub fn is_port_water_tile(t: &Tile) -> bool {
+        match t.water {
+            Some(WaterKind::Ocean) | Some(WaterKind::Lake) => true,
+            Some(WaterKind::River) => t.river_width >= 2,
+            _ => false,
+        }
+    }
+
+    pub fn near_port_water(&self, x: usize, y: usize) -> bool {
+        self.get(x, y).map_or(false, Self::is_port_water_tile)
+            || self
+                .neighbors8(x, y)
+                .iter()
+                .any(|n| Self::is_port_water_tile(self.get(n.0, n.1).unwrap()))
+    }
+
+    pub fn near_water(&self, x: usize, y: usize) -> bool {
+        self.get(x, y).map_or(false, |t| t.is_water())
+            || self
+                .neighbors8(x, y)
+                .iter()
+                .any(|n| self.get(n.0, n.1).unwrap().is_water())
     }
 
     pub fn near_ocean(&self, x: usize, y: usize) -> bool {

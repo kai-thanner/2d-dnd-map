@@ -42,14 +42,20 @@ struct GenerateArgs {
     moisture: f32,
     #[arg(long, default_value_t = 0.45)]
     dry_south: f32,
-    #[arg(long, default_value_t = 1.0)]
+    #[arg(long, default_value_t = 0.5)]
     river_amount: f32,
+    #[arg(long, default_value_t = 3000.0)]
+    max_elevation: f32,
+    #[arg(long, default_value_t = 2000.0)]
+    treeline: f32,
     #[arg(long, default_value_t = 0.5)]
     settlements: f32,
     #[arg(long, default_value_t = 28.0)]
     south_temp: f32,
     #[arg(long, default_value_t = -6.0)]
     north_temp: f32,
+    #[arg(long, default_value_t = 0.0)]
+    snow_temp: f32,
     #[arg(long)]
     out: Option<PathBuf>,
     #[arg(long)]
@@ -104,10 +110,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 moisture_scale: a.moisture,
                 dry_south: a.dry_south,
                 river_amount: a.river_amount,
+                max_elevation_m: a.max_elevation,
+                treeline_m: a.treeline,
                 settlement_density: a.settlements,
                 climate: Climate {
                     south_temp: a.south_temp,
                     north_temp: a.north_temp,
+                    snow_temp: a.snow_temp,
                     ..Climate::default()
                 },
             };

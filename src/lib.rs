@@ -7,4 +7,5 @@ pub mod palette;
 pub mod render;
 pub mod rng;
 pub mod save;
+pub mod view3d;
 pub mod world;
