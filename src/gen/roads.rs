@@ -1,5 +1,5 @@
 use crate::noise::Noise;
-use crate::world::{Biome, SettlementTier, World};
+use crate::world::{Biome, World};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
@@ -76,7 +76,7 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
     );
     let mut ports: HashSet<usize> = HashSet::new();
     for (sx, sy) in w.settlements() {
-        if w.settlement_tier(sx, sy) == Some(SettlementTier::Hafenstadt) {
+        if w.near_water(sx, sy) {
             ports.insert(w.idx(sx, sy));
             for n in w.neighbors8(sx, sy) {
                 ports.insert(w.idx(n.0, n.1));

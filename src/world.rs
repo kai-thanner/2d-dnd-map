@@ -302,6 +302,14 @@ impl World {
         out
     }
 
+    pub fn near_water(&self, x: usize, y: usize) -> bool {
+        self.get(x, y).map_or(false, |t| t.is_water())
+            || self
+                .neighbors8(x, y)
+                .iter()
+                .any(|n| self.get(n.0, n.1).unwrap().is_water())
+    }
+
     pub fn near_ocean(&self, x: usize, y: usize) -> bool {
         self.neighbors8(x, y)
             .iter()

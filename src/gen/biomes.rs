@@ -11,7 +11,7 @@ pub fn assign(w: &mut World, cfg: &Config) {
             let h = t.elevation - cfg.sea_level;
             let temp = t.temperature;
             let river = t.river;
-            let land = if temp <= 0.0 {
+            let land = if temp <= cfg.climate.snow_temp {
                 Biome::Snow
             } else if h >= 0.34 {
                 Biome::Mountain
@@ -25,13 +25,13 @@ pub fn assign(w: &mut World, cfg: &Config) {
                 if near_ocean && h < 0.03 {
                     Biome::Coast
                 } else {
-                    land_biome(temp, t.moisture)
+                    land_biome(temp, t.moisture, cfg.climate.snow_temp)
                 }
             };
             let t = w.get_mut(x, y).unwrap();
             t.biome = land;
             if river {
-                t.water = Some(if temp <= 0.0 {
+                t.water = Some(if temp <= cfg.climate.snow_temp {
                     WaterKind::Ice
                 } else {
                     WaterKind::River
@@ -41,8 +41,8 @@ pub fn assign(w: &mut World, cfg: &Config) {
     }
 }
 
-fn land_biome(temp: f32, moisture: f32) -> Biome {
-    if temp <= 0.0 {
+fn land_biome(temp: f32, moisture: f32, snow_temp: f32) -> Biome {
+    if temp <= snow_temp {
         Biome::Snow
     } else if temp < 8.0 {
         if moisture >= 0.35 {

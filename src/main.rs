@@ -50,6 +50,8 @@ struct GenerateArgs {
     south_temp: f32,
     #[arg(long, default_value_t = -6.0)]
     north_temp: f32,
+    #[arg(long, default_value_t = 0.0)]
+    snow_temp: f32,
     #[arg(long)]
     out: Option<PathBuf>,
     #[arg(long)]
@@ -108,6 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 climate: Climate {
                     south_temp: a.south_temp,
                     north_temp: a.north_temp,
+                    snow_temp: a.snow_temp,
                     ..Climate::default()
                 },
             };

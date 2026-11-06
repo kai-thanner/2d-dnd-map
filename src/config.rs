@@ -5,6 +5,8 @@ pub struct Climate {
     pub south_temp: f32,
     pub north_temp: f32,
     pub lapse_per_unit: f32,
+    #[serde(default)]
+    pub snow_temp: f32,
 }
 
 impl Default for Climate {
@@ -13,6 +15,7 @@ impl Default for Climate {
             south_temp: 28.0,
             north_temp: -6.0,
             lapse_per_unit: 55.0,
+            snow_temp: 0.0,
         }
     }
 }

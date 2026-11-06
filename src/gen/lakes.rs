@@ -30,7 +30,7 @@ pub fn fill(w: &mut World, cfg: &Config) {
             let t = w.get_mut(x, y).unwrap();
             if t.elevation < cfg.sea_level {
                 t.biome = Biome::Coast;
-                t.water = Some(if t.temperature <= 0.0 {
+                t.water = Some(if t.temperature <= cfg.climate.snow_temp {
                     WaterKind::Ice
                 } else if t.river {
                     WaterKind::River

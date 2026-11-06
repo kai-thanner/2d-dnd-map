@@ -73,6 +73,7 @@ fn freezing_everything_becomes_snow_or_ice() {
             south_temp: -10.0,
             north_temp: -20.0,
             lapse_per_unit: 55.0,
+            snow_temp: 0.0,
         },
         ..Config::default()
     };
@@ -210,8 +211,7 @@ fn sea_level_zero_does_not_crash() {
 }
 
 #[test]
-fn roads_cross_water_only_at_harbors() {
-    use dnd_2d_map::world::SettlementTier;
+fn roads_cross_water_only_at_water_settlements() {
     for seed in 1..=10u64 {
         let cfg = Config {
             seed,
@@ -235,10 +235,12 @@ fn roads_cross_water_only_at_harbors() {
                         .neighbors8(x, y)
                         .iter()
                         .chain(std::iter::once(&(x, y)))
-                        .any(|n| w.settlement_tier(n.0, n.1) == Some(SettlementTier::Hafenstadt));
+                        .any(|n| {
+                            w.get(n.0, n.1).unwrap().settlement.is_some() && w.near_water(n.0, n.1)
+                        });
                     assert!(
                         near_port,
-                        "Straße auf Wasser ohne Hafen bei ({x},{y}) seed {seed}"
+                        "Straße auf Wasser ohne Siedlung am Wasser bei ({x},{y}) seed {seed}"
                     );
                 }
             }
@@ -620,4 +622,28 @@ fn river_amount_scales_river_count() {
     assert!(one > 0, "Default muss Fluesse erzeugen");
     assert!(two >= one, "mehr Flussmenge darf nicht weniger Fluesse ergeben ({two} vs {one})");
     assert!(zero <= one, "Flussmenge 0 darf hoechstens gleich viel sein ({zero} vs {one})");
+}
+
+#[test]
+fn snow_temp_controls_snow_line() {
+    let mut cfg = Config {
+        seed: 3,
+        width: 60,
+        height: 40,
+        ..Config::default()
+    };
+    let count_snow = |cfg: &Config| {
+        gen::generate(cfg)
+            .tiles
+            .iter()
+            .filter(|t| !t.is_water() && t.biome == Biome::Snow)
+            .count()
+    };
+    let cold = count_snow(&cfg);
+    cfg.climate.snow_temp = 20.0;
+    let warm_line = count_snow(&cfg);
+    assert!(
+        warm_line > cold,
+        "höhere Schneegrenze muss mehr Schnee ergeben ({warm_line} vs {cold})"
+    );
 }
