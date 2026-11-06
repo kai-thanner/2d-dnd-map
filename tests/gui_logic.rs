@@ -42,3 +42,20 @@ fn every_biome_has_a_distinct_enough_color() {
     assert_ne!(biome_rgb(Biome::Desert), biome_rgb(Biome::Grassland));
     assert_ne!(biome_rgb(Biome::Mountain), biome_rgb(Biome::Rock));
 }
+
+#[test]
+fn hillshade_is_bounded_and_flat_is_neutral() {
+    use dnd_2d_map::palette::hillshade;
+    use dnd_2d_map::world::World;
+    let mut w = World::new(10, 10);
+    w.sea_level = 0.5;
+    for t in &mut w.tiles {
+        t.elevation = 0.6;
+    }
+    let s_flat = hillshade(&w, 5, 5);
+    assert!((0.35..=1.15).contains(&s_flat));
+    w.get_mut(6, 5).unwrap().elevation = 0.95;
+    let s_slope = hillshade(&w, 5, 5);
+    assert!((0.35..=1.15).contains(&s_slope));
+    assert_ne!(s_flat, s_slope, "Hang sollte sich vom ebenen Land unterscheiden");
+}

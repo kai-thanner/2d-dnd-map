@@ -576,3 +576,23 @@ fn dry_south_creates_more_desert_in_south() {
     assert!(south > 0, "im Süden muss Wüste entstehen");
     assert!(south > north, "Süden ({south}) muss mehr Wüste haben als Norden ({north})");
 }
+
+#[test]
+fn river_sprawl_is_bounded() {
+    use dnd_2d_map::world::WaterKind;
+    for seed in 1..=5u64 {
+        let cfg = Config {
+            seed,
+            width: 100,
+            height: 50,
+            ..Config::default()
+        };
+        let w = gen::generate(&cfg);
+        let land = w.tiles.iter().filter(|t| !t.is_water()).count();
+        let rivers = w.tiles.iter().filter(|t| t.water == Some(WaterKind::River)).count();
+        assert!(
+            rivers * 100 <= land * 12,
+            "Flussflaeche zu gross: {rivers} von {land} Landkacheln (Seed {seed})"
+        );
+    }
+}
