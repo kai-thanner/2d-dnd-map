@@ -324,3 +324,33 @@ fn depth_orders_by_view_direction() {
     let b = v90.depth(20.0, 20.0, 0.5, cx, cy);
     assert!((a - b).abs() < 1e-4, "bei 90 deg darf die Position den depth-Wert nicht aendern");
 }
+
+#[test]
+fn render_e_caps_height_shift() {
+    use dnd_2d_map::view3d::View3D;
+    // Worst Case: Zoom 4 px, flacher Kippwinkel, volle Berghöhe 6000 m
+    let v = View3D {
+        cell: 4.0,
+        tilt_deg: 16.06,
+        e_off: 0.42,
+        e_scale: 6.0,
+        ..View3D::default()
+    };
+    let (cx, cy) = (50.0, 25.0);
+    let center = (1025.0, 602.0);
+    let low = v.project(10.0, 10.0, 0.42, cx, cy, center);
+    let high = v.project(10.0, 10.0, 1.0, cx, cy, center);
+    let d = ((high.0 - low.0).powi(2) + (high.1 - low.1).powi(2)).sqrt();
+    assert!(
+        d <= 1.3 * v.cell,
+        "Hoehen-Shift darf ~1 Kachel nicht deutlich ueberschreiten (sonst Sliver/Spikes): {d} px bei cell={}",
+        v.cell
+    );
+    // project/unproject-Roundtrip bleibt mit dem Cap konsistent
+    let sp = v.project(20.0, 12.0, 0.9, cx, cy, center);
+    let bp = v.unproject(sp, cx, cy, center, 0.9);
+    assert!(
+        (bp.0 - 20.0).abs() < 0.6 && (bp.1 - 12.0).abs() < 0.6,
+        "Roundtrip mit render_e-Cap fehlgeschlagen: {bp:?}"
+    );
+}

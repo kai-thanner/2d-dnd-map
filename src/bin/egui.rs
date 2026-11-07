@@ -761,7 +761,7 @@ impl MapApp {
                     let steep = corner_spread.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
                         - corner_spread.iter().cloned().fold(f32::INFINITY, f32::min)
                         > STEEP_SPREAD;
-                    if cell >= 8.0 && (is_edge_tile(world, x, y) || steep) {
+                    if steep || (cell >= 8.0 && is_edge_tile(world, x, y)) {
                         for sy in 0..SUB {
                             for sx in 0..SUB {
                                 let fx0 = x as f32 + sx as f32 / SUB as f32;

@@ -34,8 +34,18 @@ impl View3D {
         v.clamp(0.0, 64.0)
     }
 
+    /// Wie `disp_e`, aber zusaetzlich so geclampt, dass der projektive Hoehen-
+    /// Shift nie groesser als ~1.1 Kacheln wird. Sonst projizieren steile
+    /// Kacheln bei niedrigem Zoom / flachem Kippwinkel zu langen Slivern
+    /// (Linien/Spikes beim Drehen). Wird von `project` und `unproject`
+    /// gemeinsam benutzt, damit Picking konsistent bleibt.
+    pub fn render_e(&self, e: f32) -> f32 {
+        let ca = self.tilt_deg.to_radians().cos().max(0.2);
+        self.disp_e(e).min(1.1 / ca)
+    }
+
     pub fn project(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32, center: (f32, f32)) -> (f32, f32) {
-        let e = self.disp_e(e);
+        let e = self.render_e(e);
         let a = self.tilt_deg.to_radians();
         let (sa, ca) = (a.sin(), a.cos());
         let dx = x - cx;
@@ -57,7 +67,7 @@ impl View3D {
         let vy = (p.1 - center.1 - self.pan.1) / self.cell;
         let a = self.tilt_deg.to_radians();
         let (sa, ca) = (a.sin().max(0.17), a.cos());
-        let e = self.disp_e(e_hint);
+        let e = self.render_e(e_hint);
         let rx = vx - e * 0.5 * sa * ca;
         let ry = (vy + e * self.hf * ca) / sa;
         let r = self.rot_deg.to_radians();
@@ -80,7 +90,7 @@ impl View3D {
         let dx = x - cx;
         let dy = y - cy;
         let ry = dx * s + dy * c;
-        ry * ca + self.disp_e(e) * self.hf * sa
+        ry * ca + self.render_e(e) * self.hf * sa
     }
 
     pub fn rotate_at(&mut self, p: (f32, f32), cx: f32, cy: f32, center: (f32, f32), delta_deg: f32) {
