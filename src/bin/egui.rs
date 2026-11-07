@@ -4,12 +4,16 @@ use dnd_2d_map::gen;
 use dnd_2d_map::palette;
 use dnd_2d_map::rng;
 use dnd_2d_map::save;
-use dnd_2d_map::view3d::View3D;
+use dnd_2d_map::view3d::{self, View3D};
 use dnd_2d_map::world::{Biome, Poi, SettlementTier, WaterKind, World};
 use eframe::egui;
 use rand::rngs::StdRng;
 
 const SUB: usize = 3;
+/// Kacheln mit groesserem Hoehenunterschied zwischen den Ecken (in Anzeige-
+/// Einheiten) werden wie Kuestenkacheln subdividiert, damit steiles Gelaende
+/// beim Drehen keine langen Sliver/Linien erzeugt.
+const STEEP_SPREAD: f32 = 0.6;
 
 fn bilinear_elev(w: &World, fx: f32, fy: f32) -> f32 {
     let x0 = (fx.floor() as usize).min(w.width - 1);
@@ -711,24 +715,53 @@ impl MapApp {
                             continue;
                         }
                         let bp = proj(x as f32, y as f32, self.view.e_off);
-                        tiles.push((bp.y, bp.x, cs, x, y));
+                        let d = self.view.depth(
+                            x as f32 + 0.5,
+                            y as f32 + 0.5,
+                            bilinear_elev(world, x as f32 + 0.5, y as f32 + 0.5),
+                            cx,
+                            cy,
+                        );
+                        tiles.push((d, bp.x, cs, x, y));
                     }
                 }
                 tiles.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal).then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)));
 
                 let quad = |pts: [egui::Pos2; 4], col: egui::Color32| {
-                    painter.add(egui::Shape::convex_polygon(
-                        pts.to_vec(),
-                        col,
-                        egui::Stroke::new(0.7, col),
-                    ));
+                    let raw = [
+                        (pts[0].x, pts[0].y),
+                        (pts[1].x, pts[1].y),
+                        (pts[2].x, pts[2].y),
+                        (pts[3].x, pts[3].y),
+                    ];
+                    let stroke = egui::Stroke::new(0.7, col);
+                    if view3d::quad_is_convex(raw) {
+                        painter.add(egui::Shape::convex_polygon(pts.to_vec(), col, stroke));
+                    } else {
+                        for tri in view3d::triangulate_quad(raw) {
+                            painter.add(egui::Shape::convex_polygon(
+                                tri.iter().map(|p| egui::pos2(p.0, p.1)).collect(),
+                                col,
+                                stroke,
+                            ));
+                        }
+                    }
                 };
 
                 for (_, _, cs, x, y) in &tiles {
                     let (x, y) = (*x, *y);
                     let [c00, c10, c11, c01] = *cs;
                     let t = world.get(x, y).unwrap();
-                    if cell >= 8.0 && is_edge_tile(world, x, y) {
+                    let corner_spread = [
+                        self.view.disp_e(bilinear_elev(world, x as f32, y as f32)),
+                        self.view.disp_e(bilinear_elev(world, x as f32 + 1.0, y as f32)),
+                        self.view.disp_e(bilinear_elev(world, x as f32 + 1.0, y as f32 + 1.0)),
+                        self.view.disp_e(bilinear_elev(world, x as f32, y as f32 + 1.0)),
+                    ];
+                    let steep = corner_spread.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
+                        - corner_spread.iter().cloned().fold(f32::INFINITY, f32::min)
+                        > STEEP_SPREAD;
+                    if cell >= 8.0 && (is_edge_tile(world, x, y) || steep) {
                         for sy in 0..SUB {
                             for sx in 0..SUB {
                                 let fx0 = x as f32 + sx as f32 / SUB as f32;
