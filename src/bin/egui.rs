@@ -734,7 +734,10 @@ impl MapApp {
                         (pts[2].x, pts[2].y),
                         (pts[3].x, pts[3].y),
                     ];
-                    let stroke = egui::Stroke::new(0.7, col);
+                    // StrokeKind::Inside: Kante abdichten (gegen AA-Luecken), aber nie in die
+                    // Nachbarkachel hineinmalen — sonst entstehen beim Drehen farbige
+                    // Haarlinien entlang der Kachelgrenzen (Flackern).
+                    let stroke = egui::epaint::PathStroke::new(0.7, col).inside();
                     if view3d::quad_is_convex(raw) {
                         painter.add(egui::Shape::convex_polygon(pts.to_vec(), col, stroke));
                     } else {
@@ -742,7 +745,7 @@ impl MapApp {
                             painter.add(egui::Shape::convex_polygon(
                                 tri.iter().map(|p| egui::pos2(p.0, p.1)).collect(),
                                 col,
-                                stroke,
+                                stroke.clone(),
                             ));
                         }
                     }
