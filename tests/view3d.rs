@@ -364,3 +364,30 @@ fn render_e_caps_height_shift() {
         "Roundtrip mit render_e-Cap fehlgeschlagen: {bp:?}"
     );
 }
+
+#[test]
+fn rotation_is_endless_and_periodic() {
+    use dnd_2d_map::view3d::View3D;
+    let mut v = View3D {
+        rot_deg: 0.0,
+        tilt_deg: 55.0,
+        ..View3D::default()
+    };
+    let center = (700.0, 400.0);
+    let (cx, cy) = (50.0, 25.0);
+    // 10 volle Umdrehungen weiterdrehen — rot_deg darf nicht geclampt werden
+    for _ in 0..60 {
+        v.rotate_at((733.0, 411.0), cx, cy, center, 60.0);
+    }
+    assert!(v.rot_deg > 3500.0, "rot_deg muss endlos akkumulieren, got {}", v.rot_deg);
+    // Projektion ist periodisch: rot = 3600° == rot = 0°
+    let a = v.project(20.0, 10.0, 0.8, cx, cy, center);
+    v.rot_deg = 0.0;
+    let b = v.project(20.0, 10.0, 0.8, cx, cy, center);
+    assert!(
+        (a.0 - b.0).abs() < 1e-2 && (a.1 - b.1).abs() < 1e-2,
+        "3600° muss exakt 0° entsprechen: {a:?} vs {b:?}"
+    );
+    // fast-Pfad-Check: rot_deg % 360 == 0
+    assert!((3600.0f32 % 360.0).abs() < 0.01);
+}

@@ -1136,7 +1136,15 @@ impl eframe::App for MapApp {
                 ui.separator();
                 ui.heading("Ansicht (2.5D)");
                 ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
-                ui.add(egui::Slider::new(&mut self.view.rot_deg, 0.0..=360.0).text("Drehung (°)"));
+                // Drehung endlos: Slider zeigt den Winkel mod 360, der reale
+                // Wert in rot_deg akkumuliert aber weiter (mehrere Umdrehungen).
+                let mut deg = self.view.rot_deg.rem_euclid(360.0);
+                if ui
+                    .add(egui::Slider::new(&mut deg, 0.0..=360.0).text("Drehung (°)"))
+                    .changed()
+                {
+                    self.view.rot_deg += deg - self.view.rot_deg.rem_euclid(360.0);
+                }
                 ui.add(egui::Slider::new(&mut self.view.tilt_deg, 0.0..=90.0).text("Kippwinkel (°)"));
                 ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste = Karte verschieben. Shift + mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
