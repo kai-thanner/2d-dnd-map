@@ -63,6 +63,8 @@ Stand: Branch `vibe/sloped-terrain-view-23ac3f`. Alle Angaben beziehen sich auf 
 
 `disp_e(e)` = Höhe über Wasser in Kacheln, **geclampt auf ≥ 0** (Wassertiefe wird nicht gerendert).
 
+`render_e(e)` = `disp_e(e)`, zusätzlich geclampt auf ≤ `1.1 / cos(tilt)` — der projektive Höhen-Shift bleibt dadurch immer ≤ ~1.1 Kacheln, damit steile Kacheln bei niedrigem Zoom / flachem Kippwinkel keine langen Sliver/Linien (Spikes beim Drehen) erzeugen. `project`/`unproject`/`depth` benutzen `render_e`, damit Picking konsistent bleibt.
+
 ## 5. Eingabe-Belegung (egui)
 
 - Mausrad = Zoom an Mausposition

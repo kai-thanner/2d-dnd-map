@@ -34,8 +34,18 @@ impl View3D {
         v.clamp(0.0, 64.0)
     }
 
+    /// Wie `disp_e`, aber zusaetzlich so geclampt, dass der projektive Hoehen-
+    /// Shift nie groesser als ~1.1 Kacheln wird. Sonst projizieren steile
+    /// Kacheln bei niedrigem Zoom / flachem Kippwinkel zu langen Slivern
+    /// (Linien/Spikes beim Drehen). Wird von `project` und `unproject`
+    /// gemeinsam benutzt, damit Picking konsistent bleibt.
+    pub fn render_e(&self, e: f32) -> f32 {
+        let ca = self.tilt_deg.to_radians().cos().max(0.2);
+        self.disp_e(e).min(1.1 / ca)
+    }
+
     pub fn project(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32, center: (f32, f32)) -> (f32, f32) {
-        let e = self.disp_e(e);
+        let e = self.render_e(e);
         let a = self.tilt_deg.to_radians();
         let (sa, ca) = (a.sin(), a.cos());
         let dx = x - cx;
@@ -57,7 +67,7 @@ impl View3D {
         let vy = (p.1 - center.1 - self.pan.1) / self.cell;
         let a = self.tilt_deg.to_radians();
         let (sa, ca) = (a.sin().max(0.17), a.cos());
-        let e = self.disp_e(e_hint);
+        let e = self.render_e(e_hint);
         let rx = vx - e * 0.5 * sa * ca;
         let ry = (vy + e * self.hf * ca) / sa;
         let r = self.rot_deg.to_radians();
@@ -66,6 +76,21 @@ impl View3D {
             cx + rx * c + ry * s,
             cy + -rx * s + ry * c,
         )
+    }
+
+    /// Painters-Algorithmus-Schluessel (Tiefe in Blickrichtung): weiter hinten
+    /// = kleinerer Wert, wird also zuerst gezeichnet. Beruecksichtigt die Hoehe,
+    /// damit hohe Kacheln nicht mehr falsch einsortiert werden, wenn die Karte
+    /// gedreht/geneigt ist.
+    pub fn depth(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32) -> f32 {
+        let r = self.rot_deg.to_radians();
+        let (s, c) = (r.sin(), r.cos());
+        let a = self.tilt_deg.to_radians();
+        let (sa, ca) = (a.sin(), a.cos());
+        let dx = x - cx;
+        let dy = y - cy;
+        let ry = dx * s + dy * c;
+        ry * ca + self.render_e(e) * self.hf * sa
     }
 
     pub fn rotate_at(&mut self, p: (f32, f32), cx: f32, cy: f32, center: (f32, f32), delta_deg: f32) {
@@ -87,4 +112,59 @@ impl View3D {
             self.cell = 14.0;
         }
     }
+}
+
+fn cross(o: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+}
+
+fn segments_cross(p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), p4: (f32, f32)) -> Option<(f32, f32)> {
+    let d1 = cross(p3, p4, p1);
+    let d2 = cross(p3, p4, p2);
+    let d3 = cross(p1, p2, p3);
+    let d4 = cross(p1, p2, p4);
+    let crosses = |x: f32, y: f32| (x > 0.0 && y < 0.0) || (x < 0.0 && y > 0.0);
+    if crosses(d1, d2) && crosses(d3, d4) {
+        let t = d3 / (d3 - d4);
+        Some((p3.0 + t * (p4.0 - p3.0), p3.1 + t * (p4.1 - p3.1)))
+    } else {
+        None
+    }
+}
+
+/// Projiziertes Kachel-Quad konvex (oder entartet)?
+pub fn quad_is_convex(p: [(f32, f32); 4]) -> bool {
+    let [a, b, c, d] = p;
+    let t = [cross(a, b, c), cross(b, c, d), cross(c, d, a), cross(d, a, b)];
+    t.iter().all(|&x| x >= 0.0) || t.iter().all(|&x| x <= 0.0)
+}
+
+/// Zerlegt ein Quad exakt in zwei Dreiecke. Konvexe Quads als Faecher,
+/// konkave (Pfeil) ueber die Diagonale durch die konkave Ecke, selbst
+/// schneidende (Bowtie) ueber den Kreuzungspunkt der Kanten. Dadurch ragt
+/// kein Dreieck ueber das eigentliche Quad hinaus (keine Spikes/Linien beim
+/// Drehen der Karte).
+pub fn triangulate_quad(p: [(f32, f32); 4]) -> Vec<[(f32, f32); 3]> {
+    let [a, b, c, d] = p;
+    if quad_is_convex(p) {
+        return vec![[a, b, c], [a, c, d]];
+    }
+    if let Some(x) = segments_cross(a, b, c, d) {
+        return vec![[b, c, x], [d, a, x]];
+    }
+    if let Some(x) = segments_cross(b, c, d, a) {
+        return vec![[a, b, x], [c, d, x]];
+    }
+    let turns = [cross(d, a, b), cross(a, b, c), cross(b, c, d), cross(c, d, a)];
+    let pos = turns.iter().filter(|&&x| x > 0.0).count();
+    let reflex = if pos == 1 {
+        turns.iter().position(|&x| x > 0.0).unwrap()
+    } else {
+        turns.iter().position(|&x| x < 0.0).unwrap_or(0)
+    };
+    let o = (reflex + 2) % 4;
+    vec![
+        [p[reflex], p[(reflex + 1) % 4], p[o]],
+        [p[o], p[(o + 1) % 4], p[reflex]],
+    ]
 }
