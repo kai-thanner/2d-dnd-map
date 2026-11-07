@@ -731,11 +731,18 @@ impl MapApp {
                     // Haarlinien entlang der Kachelgrenzen (Flackern). Spitze/Sliver-Polygone
                     // werden gar nicht gestroket: deren Miter-Join explodiert im Tessellator
                     // zu riesigen Dreiecken (Spikes bei flachem Kippwinkel).
+                    // Kanten-Stroke leicht abgedunkelt: abdichten gegen AA-Luecken, aber
+                    // keine hellen Haarlinien an Kachelgrenzen (hell auf dunkel sichtbar).
+                    let edge = egui::Color32::from_rgb(
+                        (col.r() as u16 * 82 / 100) as u8,
+                        (col.g() as u16 * 82 / 100) as u8,
+                        (col.b() as u16 * 82 / 100) as u8,
+                    );
                     let stroke = |poly: &[(f32, f32)]| {
                         if view3d::poly_has_sharp_spike(poly) {
                             egui::epaint::PathStroke::NONE
                         } else {
-                            egui::epaint::PathStroke::new(0.7, col).inside()
+                            egui::epaint::PathStroke::new(0.7, edge).inside()
                         }
                     };
                     if area2.abs() + area2b.abs() < 0.5 || view3d::poly_has_sharp_spike(&raw) {
