@@ -10,10 +10,6 @@ use eframe::egui;
 use rand::rngs::StdRng;
 
 const SUB: usize = 3;
-/// Kacheln mit groesserem Hoehenunterschied zwischen den Ecken (in Anzeige-
-/// Einheiten) werden wie Kuestenkacheln subdividiert, damit steiles Gelaende
-/// beim Drehen keine langen Sliver/Linien erzeugt.
-const STEEP_SPREAD: f32 = 0.6;
 
 fn bilinear_elev(w: &World, fx: f32, fy: f32) -> f32 {
     let x0 = (fx.floor() as usize).min(w.width - 1);
@@ -38,16 +34,6 @@ fn height_m(e: f32, sea: f32, max_h: f32) -> f32 {
     } else {
         d * max_h
     }
-}
-
-fn is_edge_tile(w: &World, x: usize, y: usize) -> bool {
-    let t = w.get(x, y).unwrap();
-    let eb = t.effective_biome();
-    let ew = t.water;
-    w.neighbors4(x, y).iter().any(|n| {
-        let nt = w.get(n.0, n.1).unwrap();
-        nt.effective_biome() != eb || nt.water != ew
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -734,18 +720,45 @@ impl MapApp {
                         (pts[2].x, pts[2].y),
                         (pts[3].x, pts[3].y),
                     ];
+                    // voellig entartetes Quad (Flaeche ~ 0) gar nicht zeichnen — epaint
+                    // tessellert Degenerate sonst zu riesigen Dreiecken (Spikes)
+                    let area2 = (raw[1].0 - raw[0].0) * (raw[2].1 - raw[0].1)
+                        - (raw[1].1 - raw[0].1) * (raw[2].0 - raw[0].0);
+                    let area2b = (raw[2].0 - raw[0].0) * (raw[3].1 - raw[0].1)
+                        - (raw[2].1 - raw[0].1) * (raw[3].0 - raw[0].0);
                     // StrokeKind::Inside: Kante abdichten (gegen AA-Luecken), aber nie in die
                     // Nachbarkachel hineinmalen — sonst entstehen beim Drehen farbige
-                    // Haarlinien entlang der Kachelgrenzen (Flackern).
-                    let stroke = egui::epaint::PathStroke::new(0.7, col).inside();
+                    // Haarlinien entlang der Kachelgrenzen (Flackern). Spitze/Sliver-Polygone
+                    // werden gar nicht gestroket: deren Miter-Join explodiert im Tessellator
+                    // zu riesigen Dreiecken (Spikes bei flachem Kippwinkel).
+                    let stroke = |poly: &[(f32, f32)]| {
+                        if view3d::poly_has_sharp_spike(poly) {
+                            egui::epaint::PathStroke::NONE
+                        } else {
+                            egui::epaint::PathStroke::new(0.7, col).inside()
+                        }
+                    };
+                    if area2.abs() + area2b.abs() < 0.5 || view3d::poly_has_sharp_spike(&raw) {
+                        // entartet/spitz: nicht als 4-Punkt-Polygon zeichnen (epaint
+                        // explodiert sonst), sondern ueber triangulate_quad (filtert
+                        // Degenerate weg; ggf. bleibt nichts uebrig — sub-pixel, egal)
+                        for tri in view3d::triangulate_quad(raw) {
+                            painter.add(egui::Shape::convex_polygon(
+                                tri.iter().map(|p| egui::pos2(p.0, p.1)).collect(),
+                                col,
+                                stroke(&tri),
+                            ));
+                        }
+                        return;
+                    }
                     if view3d::quad_is_convex(raw) {
-                        painter.add(egui::Shape::convex_polygon(pts.to_vec(), col, stroke));
+                        painter.add(egui::Shape::convex_polygon(pts.to_vec(), col, stroke(&raw)));
                     } else {
                         for tri in view3d::triangulate_quad(raw) {
                             painter.add(egui::Shape::convex_polygon(
                                 tri.iter().map(|p| egui::pos2(p.0, p.1)).collect(),
                                 col,
-                                stroke.clone(),
+                                stroke(&tri),
                             ));
                         }
                     }
@@ -755,16 +768,10 @@ impl MapApp {
                     let (x, y) = (*x, *y);
                     let [c00, c10, c11, c01] = *cs;
                     let t = world.get(x, y).unwrap();
-                    let corner_spread = [
-                        self.view.disp_e(bilinear_elev(world, x as f32, y as f32)),
-                        self.view.disp_e(bilinear_elev(world, x as f32 + 1.0, y as f32)),
-                        self.view.disp_e(bilinear_elev(world, x as f32 + 1.0, y as f32 + 1.0)),
-                        self.view.disp_e(bilinear_elev(world, x as f32, y as f32 + 1.0)),
-                    ];
-                    let steep = corner_spread.iter().cloned().fold(f32::NEG_INFINITY, f32::max)
-                        - corner_spread.iter().cloned().fold(f32::INFINITY, f32::min)
-                        > STEEP_SPREAD;
-                    if steep || (cell >= 8.0 && is_edge_tile(world, x, y)) {
+                    // Ab cell >= 8 ALLE Kacheln gleich subdivisieren: geteilte Kanten
+                    // bestehen dann aus exakt denselben Punkten -> keine Loecher.
+                    // Darunter sind die Kacheln so klein, dass ein Quad genuegt.
+                    if cell >= 8.0 {
                         for sy in 0..SUB {
                             for sx in 0..SUB {
                                 let fx0 = x as f32 + sx as f32 / SUB as f32;

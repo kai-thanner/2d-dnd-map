@@ -34,14 +34,17 @@ impl View3D {
         v.clamp(0.0, 64.0)
     }
 
-    /// Wie `disp_e`, aber zusaetzlich so geclampt, dass der projektive Hoehen-
-    /// Shift nie groesser als ~1.1 Kacheln wird. Sonst projizieren steile
-    /// Kacheln bei niedrigem Zoom / flachem Kippwinkel zu langen Slivern
-    /// (Linien/Spikes beim Drehen). Wird von `project` und `unproject`
-    /// gemeinsam benutzt, damit Picking konsistent bleibt.
+    /// Wie `disp_e`, aber zusaetzlich geclampt, damit der projektive Hoehen-
+    /// Shift nie die projektierte Kachelhoehe (cell * sin(tilt)) deutlich
+    /// uebersteigt (und nie ~1.1 Kacheln). Sonst projizieren steile Kacheln
+    /// bei flachem Kippwinkel (< ~52 deg) zu langen Slivern — sichtbare
+    /// Linien/Spikes. Wird von `project` und `unproject` gemeinsam benutzt,
+    /// damit Picking konsistent bleibt.
     pub fn render_e(&self, e: f32) -> f32 {
-        let ca = self.tilt_deg.to_radians().cos().max(0.2);
-        self.disp_e(e).min(1.1 / ca)
+        let a = self.tilt_deg.to_radians();
+        let ca = a.cos().max(0.2);
+        let sa = a.sin();
+        self.disp_e(e).min(sa.min(1.1) / ca)
     }
 
     pub fn project(&self, x: f32, y: f32, e: f32, cx: f32, cy: f32, center: (f32, f32)) -> (f32, f32) {
@@ -132,6 +135,33 @@ fn segments_cross(p1: (f32, f32), p2: (f32, f32), p3: (f32, f32), p4: (f32, f32)
     }
 }
 
+/// Hat das Polygon eine Spitze (Innenwinkel nahe 0/180°)? Der Stroke solcher
+/// Sliver explodiert im Tessellator (Miter-Join `normal / length_sq`) zu
+/// riesigen Dreiecken — das sind die sichtbaren Spikes/Linien.
+pub fn poly_has_sharp_spike(p: &[(f32, f32)]) -> bool {
+    let n = p.len();
+    if n < 3 {
+        return true;
+    }
+    for i in 0..n {
+        let a = p[(i + n - 1) % n];
+        let b = p[i];
+        let c = p[(i + 1) % n];
+        let e1 = (b.0 - a.0, b.1 - a.1);
+        let e2 = (c.0 - b.0, c.1 - b.1);
+        let l1 = (e1.0 * e1.0 + e1.1 * e1.1).sqrt();
+        let l2 = (e2.0 * e2.0 + e2.1 * e2.1).sqrt();
+        if l1 < 1e-6 || l2 < 1e-6 {
+            return true;
+        }
+        let sin = (e1.0 * e2.1 - e1.1 * e2.0).abs() / (l1 * l2);
+        if sin < 0.15 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Projiziertes Kachel-Quad konvex (oder entartet)?
 pub fn quad_is_convex(p: [(f32, f32); 4]) -> bool {
     let [a, b, c, d] = p;
@@ -139,32 +169,50 @@ pub fn quad_is_convex(p: [(f32, f32); 4]) -> bool {
     t.iter().all(|&x| x >= 0.0) || t.iter().all(|&x| x <= 0.0)
 }
 
-/// Zerlegt ein Quad exakt in zwei Dreiecke. Konvexe Quads als Faecher,
-/// konkave (Pfeil) ueber die Diagonale durch die konkave Ecke, selbst
-/// schneidende (Bowtie) ueber den Kreuzungspunkt der Kanten. Dadurch ragt
-/// kein Dreieck ueber das eigentliche Quad hinaus (keine Spikes/Linien beim
-/// Drehen der Karte).
+/// Zerlegt ein Quad exakt in Dreiecke (konvexe als Faecher, konkave/Pfeil ueber
+/// die Diagonale durch die konkave Ecke, selbst schneidende/Bowtie ueber den
+/// Kreuzungspunkt der Kanten). Entartete Dreiecke (Flaeche/Kante ~ 0) werden
+/// weggelassen: epaint tessellert solche Degenerate sonst zu riesigen
+/// Dreiecken (sichtbare Spikes). Dadurch ragt kein Dreieck ueber das
+/// eigentliche Quad hinaus.
 pub fn triangulate_quad(p: [(f32, f32); 4]) -> Vec<[(f32, f32); 3]> {
+    fn tri_ok(t: [(f32, f32); 3]) -> bool {
+        // zu klein oder zu spitz -> epaint tessellert das sonst zu Riesendreiecken
+        if cross(t[0], t[1], t[2]).abs() < 0.05 {
+            return false;
+        }
+        for i in 0..3 {
+            let a = t[i];
+            let b = t[(i + 1) % 3];
+            if (a.0 - b.0).hypot(a.1 - b.1) < 0.1 {
+                return false;
+            }
+        }
+        true
+    }
     let [a, b, c, d] = p;
+    let mut out = Vec::new();
     if quad_is_convex(p) {
-        return vec![[a, b, c], [a, c, d]];
-    }
-    if let Some(x) = segments_cross(a, b, c, d) {
-        return vec![[b, c, x], [d, a, x]];
-    }
-    if let Some(x) = segments_cross(b, c, d, a) {
-        return vec![[a, b, x], [c, d, x]];
-    }
-    let turns = [cross(d, a, b), cross(a, b, c), cross(b, c, d), cross(c, d, a)];
-    let pos = turns.iter().filter(|&&x| x > 0.0).count();
-    let reflex = if pos == 1 {
-        turns.iter().position(|&x| x > 0.0).unwrap()
+        out.push([a, b, c]);
+        out.push([a, c, d]);
+    } else if let Some(x) = segments_cross(a, b, c, d) {
+        out.push([b, c, x]);
+        out.push([d, a, x]);
+    } else if let Some(x) = segments_cross(b, c, d, a) {
+        out.push([a, b, x]);
+        out.push([c, d, x]);
     } else {
-        turns.iter().position(|&x| x < 0.0).unwrap_or(0)
-    };
-    let o = (reflex + 2) % 4;
-    vec![
-        [p[reflex], p[(reflex + 1) % 4], p[o]],
-        [p[o], p[(o + 1) % 4], p[reflex]],
-    ]
+        let turns = [cross(d, a, b), cross(a, b, c), cross(b, c, d), cross(c, d, a)];
+        let pos = turns.iter().filter(|&&x| x > 0.0).count();
+        let reflex = if pos == 1 {
+            turns.iter().position(|&x| x > 0.0).unwrap()
+        } else {
+            turns.iter().position(|&x| x < 0.0).unwrap_or(0)
+        };
+        let o = (reflex + 2) % 4;
+        out.push([p[reflex], p[(reflex + 1) % 4], p[o]]);
+        out.push([p[o], p[(o + 1) % 4], p[reflex]]);
+    }
+    out.retain(|t| tri_ok(*t));
+    out
 }
