@@ -123,15 +123,13 @@ fn reachable_settlements(
 
 fn step_cost(w: &World, ni: usize, x: usize, y: usize, from_e: f32, jitter: &Noise, ports: &HashSet<usize>) -> f32 {
     let t = w.get(x, y).unwrap();
+    let _ = ports;
+    // Keine Straßen über Meer/See/Eis — nur Flüsse (Brücke, river) sind querbar.
+    if t.is_water() && t.effective_biome() != Biome::River {
+        return f32::INFINITY;
+    }
     let base = match t.effective_biome() {
-        Biome::Ocean | Biome::Ice => f32::INFINITY,
-        Biome::Lake => {
-            if ports.contains(&ni) {
-                6.0
-            } else {
-                f32::INFINITY
-            }
-        }
+        Biome::Ocean | Biome::Ice | Biome::Lake => f32::INFINITY,
         Biome::River => 15.0,
         Biome::Mountain => 100.0,
         Biome::Rock => 25.0,

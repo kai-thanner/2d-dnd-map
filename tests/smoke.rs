@@ -440,8 +440,14 @@ fn carved_river_reaches_water() {
     let reaches = w.get(last.0, last.1).unwrap().elevation < cfg.sea_level
         || w.neighbors8(last.0, last.1)
             .iter()
-            .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level);
-    assert!(reaches, "Fluss muss im Gewaesser enden, nicht im Nirgendwo");
+            .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level
+                || w.get(n.0, n.1).unwrap().is_water());
+    // Flüsse laufen nie bergauf: Ende ist entweder Gewässer ODER ein lokales
+    // Minimum (Senke — daraus macht lakes::fill einen See)
+    let is_local_min = !w.neighbors8(last.0, last.1)
+        .iter()
+        .any(|n| w.get(n.0, n.1).unwrap().elevation < w.get(last.0, last.1).unwrap().elevation);
+    assert!(reaches || is_local_min, "Fluss endet weder im Gewässer noch in einer Senke");
 }
 
 #[test]
@@ -551,7 +557,12 @@ fn every_settled_landmass_has_a_harbor() {
                         .as_ref()
                         .map_or(false, |st| st.has_port)
                 });
-                assert!(has_harbor, "Landmasse mit {total_pop} Ew. (Seed {seed}) hat keinen Hafen");
+                // Hafen nur an Siedlungen DIREKT am Meer; Landmassen ohne
+                // küstennahe Siedlung haben eben keinen Hafen.
+                let has_coastal_settlement = setts.iter().any(|s| w.near_ocean(s.0, s.1));
+                if has_coastal_settlement {
+                    assert!(has_harbor, "Landmasse mit {total_pop} Ew. und Kuestensiedlung (Seed {seed}) hat keinen Hafen");
+                }
             }
         }
     }

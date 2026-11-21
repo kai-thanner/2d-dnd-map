@@ -55,10 +55,14 @@ fn ensure_harbors(w: &mut World) {
                 .map(|s| w.get(s.0, s.1).unwrap().settlement.as_ref().unwrap().population as u64)
                 .sum();
             let n_harbors = ((total_pop / 25_000).max(1) as usize).min(setts.len());
-            let dist = water_dist_map(w, &comp);
+            let dist = ocean_dist_map(w, &comp);
             let mut coastal = setts.clone();
             coastal.sort_by_key(|s| dist.get(&w.idx(s.0, s.1)).copied().unwrap_or(u32::MAX));
             for s in coastal.iter().take(n_harbors) {
+                // nur Siedlungen direkt am Meer bekommen einen Hafen
+                if !w.near_ocean(s.0, s.1) {
+                    continue;
+                }
                 let t = w.get_mut(s.0, s.1).unwrap();
                 if let Some(st) = &mut t.settlement {
                     st.has_port = true;
@@ -66,6 +70,39 @@ fn ensure_harbors(w: &mut World) {
                         st.population = 2500;
                     }
                 }
+            }
+        }
+    }
+    // Global: niemals genau 1 Hafen auf der ganzen Karte — entweder 0 oder >= 2.
+    let harbor_settlements: Vec<(usize, usize)> = (0..w.height)
+        .flat_map(|y| (0..w.width).map(move |x| (x, y)))
+        .filter(|(x, y)| {
+            w.get(*x, *y)
+                .unwrap()
+                .settlement
+                .as_ref()
+                .map_or(false, |s| s.has_port)
+        })
+        .collect();
+    if harbor_settlements.len() == 1 {
+        let (hx, hy) = harbor_settlements[0];
+        let other = (0..w.height)
+            .flat_map(|y| (0..w.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let t = w.get(*x, *y).unwrap();
+                t.settlement.is_some()
+                    && !t.settlement.as_ref().unwrap().has_port
+                    && w.near_ocean(*x, *y)
+            })
+            .min_by_key(|(x, y)| {
+                ((*x as f32 - hx as f32).powi(2) + (*y as f32 - hy as f32).powi(2)) as u64
+            });
+        match other {
+            Some((x, y)) => {
+                w.get_mut(x, y).unwrap().settlement.as_mut().unwrap().has_port = true;
+            }
+            None => {
+                w.get_mut(hx, hy).unwrap().settlement.as_mut().unwrap().has_port = false;
             }
         }
     }
@@ -106,7 +143,8 @@ fn place_range(
         }
         let population = rng.random_range(pop_range.clone());
         let name = names::settlement(rng, population, w.near_ocean(x, y));
-        let has_port = w.near_port_water(x, y);
+        // Hafen nur bei DIREKT angrenzendem Meer (Ocean/Bucht) — nicht See/Fluss.
+        let has_port = w.near_ocean(x, y) && !t.is_water();
         let t = w.get_mut(x, y).unwrap();
         t.settlement = Some(Settlement {
             name,
@@ -118,14 +156,12 @@ fn place_range(
     }
 }
 
-fn water_dist_map(w: &World, comp: &[(usize, usize)]) -> std::collections::HashMap<usize, u32> {
+/// Distanz zur Küste — nur OCEAN (Meer/Bucht) zaehlt, nicht See/Fluss.
+fn ocean_dist_map(w: &World, comp: &[(usize, usize)]) -> std::collections::HashMap<usize, u32> {
     let mut dist: std::collections::HashMap<usize, u32> = std::collections::HashMap::new();
     let mut stack: Vec<(usize, usize, u32)> = Vec::new();
     for (cx, cy) in comp {
-        if w.neighbors8(*cx, *cy)
-            .iter()
-            .any(|n| World::is_port_water_tile(w.get(n.0, n.1).unwrap()))
-        {
+        if w.near_ocean(*cx, *cy) {
             stack.push((*cx, *cy, 0));
         }
     }
