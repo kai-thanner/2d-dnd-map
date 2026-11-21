@@ -261,7 +261,12 @@ pub fn ferry_tiles(w: &World) -> HashSet<usize> {
                     }
                 }
             }
-            if comp.len() <= FERRY_MAX_TILES {
+            // nur eisfreie Binnengewässer (See/breiter Fluss) — nie Meer oder Eis
+            if comp.len() <= FERRY_MAX_TILES
+                && comp.iter().all(|&c| {
+                    matches!(w.tiles[c].water, Some(WaterKind::Lake) | Some(WaterKind::River))
+                })
+            {
                 for c in comp {
                     ferry.insert(c);
                 }

@@ -221,7 +221,7 @@ fn roads_never_on_ocean_and_only_on_navigable_water() {
             ..Config::default()
         };
         let w = gen::generate(&cfg);
-        let ports = dnd_2d_map::gen::roads::compute_ports(&w);
+        let ferry = dnd_2d_map::gen::roads::ferry_tiles(&w);
         for y in 0..w.height {
             for x in 0..w.width {
                 let t = w.get(x, y).unwrap();
@@ -233,9 +233,10 @@ fn roads_never_on_ocean_and_only_on_navigable_water() {
                         panic!("STRASSE_AUF_MEER bei ({x},{y}) seed {seed}");
                     }
                     Some(WaterKind::Lake) => {
+                        // Fähre über schmale Gewässer (Bucht ≤ 12 Tiles) erlaubt
                         assert!(
-                            ports.contains(&w.idx(x, y)),
-                            "STRASSE_AUF_UNNAVIGABLEM_SEE bei ({x},{y}) seed {seed}"
+                            ferry.contains(&w.idx(x, y)),
+                            "STRASSE_AUF_SEE bei ({x},{y}) seed {seed} (kein Fähre-Tile)"
                         );
                     }
                     Some(WaterKind::River) | None => {}
