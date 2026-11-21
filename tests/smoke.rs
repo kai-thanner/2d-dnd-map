@@ -221,7 +221,7 @@ fn roads_never_on_ocean_and_only_on_navigable_water() {
             ..Config::default()
         };
         let w = gen::generate(&cfg);
-        let ports = dnd_2d_map::gen::roads::compute_ports(&w);
+        let ferry = dnd_2d_map::gen::roads::ferry_tiles(&w);
         for y in 0..w.height {
             for x in 0..w.width {
                 let t = w.get(x, y).unwrap();
@@ -233,9 +233,10 @@ fn roads_never_on_ocean_and_only_on_navigable_water() {
                         panic!("STRASSE_AUF_MEER bei ({x},{y}) seed {seed}");
                     }
                     Some(WaterKind::Lake) => {
+                        // Fähre über schmale Gewässer (Bucht ≤ 12 Tiles) erlaubt
                         assert!(
-                            ports.contains(&w.idx(x, y)),
-                            "STRASSE_AUF_UNNAVIGABLEM_SEE bei ({x},{y}) seed {seed}"
+                            ferry.contains(&w.idx(x, y)),
+                            "STRASSE_AUF_SEE bei ({x},{y}) seed {seed} (kein Fähre-Tile)"
                         );
                     }
                     Some(WaterKind::River) | None => {}
@@ -440,8 +441,14 @@ fn carved_river_reaches_water() {
     let reaches = w.get(last.0, last.1).unwrap().elevation < cfg.sea_level
         || w.neighbors8(last.0, last.1)
             .iter()
-            .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level);
-    assert!(reaches, "Fluss muss im Gewaesser enden, nicht im Nirgendwo");
+            .any(|n| w.get(n.0, n.1).unwrap().elevation < cfg.sea_level
+                || w.get(n.0, n.1).unwrap().is_water());
+    // Flüsse laufen nie bergauf: Ende ist entweder Gewässer ODER ein lokales
+    // Minimum (Senke — daraus macht lakes::fill einen See)
+    let is_local_min = !w.neighbors8(last.0, last.1)
+        .iter()
+        .any(|n| w.get(n.0, n.1).unwrap().elevation < w.get(last.0, last.1).unwrap().elevation);
+    assert!(reaches || is_local_min, "Fluss endet weder im Gewässer noch in einer Senke");
 }
 
 #[test]
@@ -551,7 +558,12 @@ fn every_settled_landmass_has_a_harbor() {
                         .as_ref()
                         .map_or(false, |st| st.has_port)
                 });
-                assert!(has_harbor, "Landmasse mit {total_pop} Ew. (Seed {seed}) hat keinen Hafen");
+                // Hafen nur an Siedlungen DIREKT am Meer; Landmassen ohne
+                // küstennahe Siedlung haben eben keinen Hafen.
+                let has_coastal_settlement = setts.iter().any(|s| w.near_ocean(s.0, s.1));
+                if has_coastal_settlement {
+                    assert!(has_harbor, "Landmasse mit {total_pop} Ew. und Kuestensiedlung (Seed {seed}) hat keinen Hafen");
+                }
             }
         }
     }

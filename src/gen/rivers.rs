@@ -65,8 +65,12 @@ pub fn carve_downhill(w: &mut World, sea_level: f32, start: (usize, usize)) -> V
                 continue;
             }
             let e = w.get(n.0, n.1).unwrap().elevation;
-            let uphill = (e - cur_e).max(0.0) * 3.0;
-            let score = e + uphill + jitter.fbm(n.0 as f32 * 0.55, n.1 as f32 * 0.55, 2) * 0.035;
+            // Flüsse laufen NIEMALS bergauf — sonst fließen sie über Berge.
+            // In einer Senke stoppen sie; dort bildet lakes::fill einen See.
+            if e > cur_e + 1e-4 {
+                continue;
+            }
+            let score = e + jitter.fbm(n.0 as f32 * 0.55, n.1 as f32 * 0.55, 2) * 0.035;
             if score < next_score {
                 next_score = score;
                 next = Some(n);

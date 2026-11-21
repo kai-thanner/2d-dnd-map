@@ -11,6 +11,44 @@ use rand::rngs::StdRng;
 
 const SUB: usize = 3;
 
+
+/// Kleines Vektor-Icon fürs Gasthaus (Bierkrug) — statt Buchstabe "I".
+fn draw_inn_icon(painter: &egui::Painter, c: egui::Pos2, s: f32, col: egui::Color32) {
+    let w = s * 0.30; // halbe Breite
+    let h = s * 0.38; // halbe Höhe
+    let body = egui::Rect::from_center_size(c, egui::vec2(w * 2.0 * 0.8, h * 2.0 * 0.85));
+    painter.rect_filled(body, 1.0, col.gamma_multiply(0.35));
+    painter.rect_stroke(body, 1.0, egui::Stroke::new(1.2, col), egui::StrokeKind::Inside);
+    // Henkel
+    let handle = egui::Rect::from_min_size(
+        egui::pos2(body.right() - 1.0, body.center().y - h * 0.35),
+        egui::vec2(w * 0.45, h * 0.7),
+    );
+    painter.rect_stroke(handle, 2.0, egui::Stroke::new(1.2, col), egui::StrokeKind::Inside);
+    // Schaumhaube
+    for (dx, dy, r) in [(-w * 0.35, -h * 0.95, w * 0.28), (0.0, -h * 1.05, w * 0.32), (w * 0.35, -h * 0.95, w * 0.28)] {
+        painter.circle_filled(egui::pos2(c.x + dx, c.y + dy), r, egui::Color32::WHITE);
+    }
+}
+
+/// Kleines Vektor-Icon für den Händler (Handkarren) — statt Buchstabe "M".
+fn draw_merchant_icon(painter: &egui::Painter, c: egui::Pos2, s: f32, col: egui::Color32) {
+    let w = s * 0.42;
+    let h = s * 0.30;
+    // Ladefläche
+    let bed = egui::Rect::from_center_size(egui::pos2(c.x - w * 0.15, c.y - h * 0.1), egui::vec2(w * 1.5, h * 1.1));
+    painter.rect_filled(bed, 1.0, col.gamma_multiply(0.35));
+    painter.rect_stroke(bed, 1.0, egui::Stroke::new(1.2, col), egui::StrokeKind::Inside);
+    // Deichsel
+    painter.line_segment(
+        [egui::pos2(bed.left(), bed.bottom()), egui::pos2(bed.right() + w * 0.7, bed.bottom() + h * 0.5)],
+        egui::Stroke::new(1.2, col),
+    );
+    // zwei Räder
+    painter.circle_stroke(egui::pos2(c.x - w * 0.45, c.y + h * 0.75), h * 0.42, egui::Stroke::new(1.2, col));
+    painter.circle_stroke(egui::pos2(c.x + w * 0.25, c.y + h * 0.75), h * 0.42, egui::Stroke::new(1.2, col));
+}
+
 fn bilinear_elev(w: &World, fx: f32, fy: f32) -> f32 {
     let x0 = (fx.floor() as usize).min(w.width - 1);
     let y0 = (fy.floor() as usize).min(w.height - 1);
@@ -586,7 +624,7 @@ impl MapApp {
         };
         if middle_down && response.hovered() {
             if shift {
-                self.view.tilt_deg = (self.view.tilt_deg - delta.y * 0.25).clamp(0.0, 90.0);
+                self.view.tilt_deg = (self.view.tilt_deg - delta.y * 0.25).clamp(50.0, 90.0);
                 if delta.x != 0.0 {
                     self.view.rotate_at(pivot, mcx, mcy, center, delta.x * 0.25);
                 }
@@ -622,10 +660,10 @@ impl MapApp {
             self.view.rotate_at(pivot, mcx, mcy, center, 6.0);
         }
         if ui.input(|i| i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::ArrowUp)) {
-            self.view.tilt_deg = (self.view.tilt_deg + 6.0).clamp(0.0, 90.0);
+            self.view.tilt_deg = (self.view.tilt_deg + 6.0).clamp(50.0, 90.0);
         }
         if ui.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::ArrowDown)) {
-            self.view.tilt_deg = (self.view.tilt_deg - 6.0).clamp(0.0, 90.0);
+            self.view.tilt_deg = (self.view.tilt_deg - 6.0).clamp(50.0, 90.0);
         }
 
         let cell = self.view.cell;
@@ -830,10 +868,26 @@ impl MapApp {
                         let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
                         for (nx, ny) in world.neighbors8(x, y) {
                             let nt = world.get(nx, ny).unwrap();
-                            if nt.road {
-                                let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
-                                painter.line_segment([c0, c1], road_stroke);
+                            if !nt.road {
+                                continue;
                             }
+                            // Diagonale: Segment darf kein Meer/See kreuzen
+                            // (Fluss-Brücken sind ok)
+                            if nx != x && ny != y {
+                                let blocking = |t: &dnd_2d_map::world::Tile| {
+                                    t.is_water()
+                                        && t.water != Some(WaterKind::River)
+                                        && !t.road
+                                };
+                                if blocking(world.get(nx, y).unwrap()) || blocking(world.get(x, ny).unwrap()) {
+                                    continue;
+                                }
+                            }
+                            if t.is_water() && !t.road {
+                                continue;
+                            }
+                            let c1 = proj(nx as f32 + 0.5, ny as f32 + 0.5, nt.elevation);
+                            painter.line_segment([c0, c1], road_stroke);
                         }
                     }
                 }
@@ -893,18 +947,24 @@ impl MapApp {
                             }
                             painter.circle_filled(c0, r, col);
                         } else if let Some(p) = &t.poi {
-                            let (ch, col) = match p {
-                                Poi::Dungeon { .. } => ("D", egui::Color32::from_rgb(235, 70, 70)),
-                                Poi::Inn { .. } => ("I", egui::Color32::from_rgb(245, 225, 90)),
-                                Poi::Merchant { .. } => ("M", egui::Color32::from_rgb(90, 225, 225)),
-                            };
-                            painter.text(
-                                c0,
-                                egui::Align2::CENTER_CENTER,
-                                ch,
-                                egui::FontId::proportional(cell * 0.7),
-                                col,
-                            );
+                            let s = cell * 0.7;
+                            match p {
+                                Poi::Dungeon { .. } => {
+                                    painter.text(
+                                        c0,
+                                        egui::Align2::CENTER_CENTER,
+                                        "D",
+                                        egui::FontId::proportional(s),
+                                        egui::Color32::from_rgb(235, 70, 70),
+                                    );
+                                }
+                                Poi::Inn { .. } => {
+                                    draw_inn_icon(&painter, c0, s, egui::Color32::from_rgb(245, 225, 90))
+                                }
+                                Poi::Merchant { .. } => {
+                                    draw_merchant_icon(&painter, c0, s, egui::Color32::from_rgb(90, 225, 225))
+                                }
+                            }
                         }
                     }
                 }
@@ -923,19 +983,25 @@ impl MapApp {
                             continue;
                         }
                         let c0 = proj(x as f32 + 0.5, y as f32 + 0.5, t.elevation);
-                        let (ch, col) = match &t.poi {
-                            Some(Poi::Dungeon { .. }) => ("D", egui::Color32::from_rgb(235, 70, 70)),
-                            Some(Poi::Inn { .. }) => ("I", egui::Color32::from_rgb(245, 225, 90)),
-                            Some(Poi::Merchant { .. }) => ("M", egui::Color32::from_rgb(90, 225, 225)),
+                        let s = cell * 0.7;
+                        match &t.poi {
+                            Some(Poi::Dungeon { .. }) => {
+                                painter.text(
+                                    c0,
+                                    egui::Align2::CENTER_CENTER,
+                                    "D",
+                                    egui::FontId::proportional(s),
+                                    egui::Color32::from_rgb(235, 70, 70),
+                                );
+                            }
+                            Some(Poi::Inn { .. }) => {
+                                draw_inn_icon(&painter, c0, s, egui::Color32::from_rgb(245, 225, 90))
+                            }
+                            Some(Poi::Merchant { .. }) => {
+                                draw_merchant_icon(&painter, c0, s, egui::Color32::from_rgb(90, 225, 225))
+                            }
                             None => continue,
-                        };
-                        painter.text(
-                            c0,
-                            egui::Align2::CENTER_CENTER,
-                            ch,
-                            egui::FontId::proportional(cell * 0.7),
-                            col,
-                        );
+                        }
                     }
                 }
             }
@@ -1152,7 +1218,7 @@ impl eframe::App for MapApp {
                 {
                     self.view.rot_deg += deg - self.view.rot_deg.rem_euclid(360.0);
                 }
-                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 0.0..=90.0).text("Kippwinkel (°)"));
+                ui.add(egui::Slider::new(&mut self.view.tilt_deg, 50.0..=90.0).text("Kippwinkel (°)"));
                 ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste = Karte verschieben. Shift + mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
@@ -1175,7 +1241,7 @@ impl eframe::App for MapApp {
                             ui.label(b.name());
                         });
                     }
-                    ui.label("— Straße  ● Siedlung (Größe/Farbe = Stufe, blauer Ring = Hafen)  D Dungeon  I Gasthaus  M Händler");
+                    ui.label("— Straße  ● Siedlung (Größe/Farbe = Stufe, blauer Ring = Hafen)  D Dungeon  (Bierkrug) Gasthaus  (Handkarren) Händler");
                 });
 
                 ui.separator();

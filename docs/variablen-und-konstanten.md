@@ -76,8 +76,7 @@ Stand: Branch `vibe/sloped-terrain-view-23ac3f`. Alle Angaben beziehen sich auf 
 
 | Gelände | Kosten |
 |---|---|
-| Ocean / Ice | **∞ (nie)** – keine Straßen übers Meer |
-| Lake | 6, falls schiffbares Binnengewässer (Hafen-Flut), sonst ∞ |
+| Ocean / Lake / Ice | **∞ (nie)** – keine Straßen übers Meer/See; Fluss-Brücken erlaubt |
 | River | 15 (Brücke) |
 | Mountain | 100 |
 | Rock | 25 |
@@ -93,5 +92,7 @@ Stand: Branch `vibe/sloped-terrain-view-23ac3f`. Alle Angaben beziehen sich auf 
 - Dungeons: `max(2, round(settlement_density × 6))`, nur in Mountain/Rock/Forest/Taiga, ≥ 8 Kacheln von Siedlungen
 - Gasthäuser: `min(8, Siedlungen + 2)`, nur an Straßen, 2–14 Kacheln von Siedlung
 - Händler: einer pro Siedlung; **15 % Chance auf berühmten Händler** (`FAMOUS_MERCHANTS` in `names.rs`)
-- Hafen: jede besiedelte Landmasse bekommt mind. 1 `has_port`
+- Hafen (`has_port`): nur an Siedlungen mit DIREKT angrenzendem Ozean (Meer/Bucht), nie See/Fluss/Berg; global nie genau 1 Hafen auf der Karte (0 oder ≥ 2)
+- Flüsse: strikt bergab (kein uphill-Schritt); enden in Gewässer oder Senke
+- Seen: Senken über Meeresspiegel werden per Priority-Flood bis zur Überlaufhöhe aufgefüllt (flache Oberfläche, mind. 6 Kacheln, Tiefe ≥ 0.02)
 - Siedlungs-Stufen nach Einwohnerzahl (Gehöft/Dorf/Kleinstadt/Stadt/Kaiserstadt, + Hafenstadt an Küste)
