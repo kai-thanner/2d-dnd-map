@@ -863,8 +863,10 @@ dependencies = [
 name = "dnd-2d-map"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "clap",
  "eframe",
+ "naga",
  "rand",
  "serde",
  "serde_json",

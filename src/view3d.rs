@@ -7,6 +7,8 @@ pub struct View3D {
     pub hf: f32,
     pub e_off: f32,
     pub e_scale: f32,
+    /// Kamera-Distanz für die echte 3D-Ansicht (terrain3d).
+    pub dist: f32,
 }
 
 impl Default for View3D {
@@ -19,6 +21,7 @@ impl Default for View3D {
             hf: 1.0,
             e_off: 0.0,
             e_scale: 1.0,
+            dist: 260.0,
         }
     }
 }

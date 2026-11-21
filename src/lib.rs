@@ -5,6 +5,7 @@ pub mod names;
 pub mod noise;
 pub mod palette;
 pub mod render;
+pub mod terrain3d;
 pub mod rng;
 pub mod save;
 pub mod view3d;

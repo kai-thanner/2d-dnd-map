@@ -130,6 +130,13 @@ struct MapApp {
     tex: Option<egui::TextureHandle>,
     tex_key: (u64, usize, usize, u64, usize),
     status: String,
+    /// echte 3D-Ansicht (wgpu) aktiv?
+    mode3d: bool,
+    /// GPU-Zielformat (aus eframe-RenderState) + MSAA
+    target_format: eframe::wgpu::TextureFormat,
+    msaa: u32,
+    /// Mesh-Cache fürs 3D-Terrain: (revision, mesh)
+    mesh3d: Option<(u64, std::sync::Arc<dnd_2d_map::terrain3d::TerrainMesh>)>,
 }
 
 impl Default for MapApp {
@@ -160,7 +167,19 @@ impl Default for MapApp {
             tex: None,
             tex_key: (u64::MAX, 0, 0, 0, 0),
             status: "Bereit – Werte links einstellen und „Generieren“ drücken.".to_string(),
+            mode3d: true,
+            target_format: eframe::wgpu::TextureFormat::Bgra8UnormSrgb,
+            msaa: 4,
+            mesh3d: None,
         }
+    }
+}
+
+impl MapApp {
+    fn new(target_format: eframe::wgpu::TextureFormat) -> Self {
+        let mut app = Self::default();
+        app.target_format = target_format;
+        app
     }
 }
 
@@ -555,11 +574,90 @@ impl MapApp {
         self.tex_key = key;
     }
 
+    /// Echte 3D-Ansicht: Terrain-Mesh via wgpu- PaintCallback (ein Draw-Call,
+    /// Depth-Buffer) — siehe terrain3d.rs. Die 2.5D-Ansicht bleibt darunter
+    /// unangetastet (eingefroren).
+    fn draw_map_3d(&mut self, ui: &mut egui::Ui) {
+        use dnd_2d_map::terrain3d::{build_terrain_mesh, orbit_camera, Terrain3d};
+        let avail = ui.available_rect_before_wrap();
+        let response = ui.allocate_rect(avail, egui::Sense::click_and_drag());
+        let rect = response.rect;
+        let Some(state) = &self.state else { return };
+        let revision = state.revision;
+
+        // Eingabe: Drag = Orbit (Yaw/Pitch), Mausrad = Distanz, Q/E/W/S wie 2.5D
+        let delta = ui.input(|i| i.pointer.delta());
+        if response.dragged() {
+            self.view.rot_deg += delta.x * 0.3;
+            self.view.tilt_deg = (self.view.tilt_deg - delta.y * 0.25).clamp(1.0, 90.0);
+        }
+        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 && response.hovered() {
+            self.view.dist = (self.view.dist * (scroll * 0.0016).exp()).clamp(30.0, 3000.0);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Q)) {
+            self.view.rot_deg -= 6.0;
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::E)) {
+            self.view.rot_deg += 6.0;
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::ArrowUp)) {
+            self.view.tilt_deg = (self.view.tilt_deg + 6.0).clamp(1.0, 90.0);
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::S) || i.key_pressed(egui::Key::ArrowDown)) {
+            self.view.tilt_deg = (self.view.tilt_deg - 6.0).clamp(1.0, 90.0);
+        }
+
+        // Mesh-Cache: nur bei neuer Revision (Generieren/Laden/Edit) neu bauen
+        let rebuild = self
+            .mesh3d
+            .as_ref()
+            .map(|(r, _)| *r != revision)
+            .unwrap_or(true);
+        if rebuild {
+            let e_scale = self.cfg.max_elevation_m / 1000.0;
+            let mesh = build_terrain_mesh(&state.world, state.world.sea_level, e_scale, revision);
+            self.mesh3d = Some((revision, std::sync::Arc::new(mesh)));
+        }
+        let mesh = self.mesh3d.as_ref().unwrap().1.clone();
+        let (w_map, h_map) = (state.world.width, state.world.height);
+
+        let aspect = (rect.width() / rect.height()).max(0.01);
+        let map_diag = (((w_map * w_map + h_map * h_map) as f32).sqrt()).max(1.0);
+        let (view_proj, eye) = orbit_camera(
+            self.view.rot_deg,
+            self.view.tilt_deg,
+            self.view.dist,
+            [0.0, 0.0, 0.0],
+            aspect,
+            map_diag,
+        );
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(24, 26, 32));
+        let cb = Terrain3d {
+            mesh,
+            view_proj,
+            cam_pos: eye,
+            light_dir: [-0.35, -0.45, 0.82],
+            fog_color: [0.62, 0.72, 0.85],
+            fog_density: 3.0 / self.view.dist.max(1.0),
+            target_format: self.target_format,
+            msaa_samples: self.msaa,
+        };
+        painter.add(egui::Shape::Callback(
+            eframe::egui_wgpu::Callback::new_paint_callback(rect, cb),
+        ));
+    }
+
     fn draw_map(&mut self, ui: &mut egui::Ui) {
         if self.state.is_none() {
             ui.centered_and_justified(|ui| {
                 ui.label("Noch keine Karte vorhanden – links „Generieren“ drücken.");
             });
+            return;
+        }
+        if self.mode3d {
+            self.draw_map_3d(ui);
             return;
         }
         let avail = ui.available_rect_before_wrap();
@@ -1141,7 +1239,15 @@ impl eframe::App for MapApp {
                 });
 
                 ui.separator();
-                ui.heading("Ansicht (2.5D)");
+                ui.horizontal(|ui| {
+                    ui.label("Ansicht:");
+                    ui.radio_value(&mut self.mode3d, false, "2.5D (eingefroren)");
+                    ui.radio_value(&mut self.mode3d, true, "3D (wgpu)");
+                });
+                if self.mode3d {
+                    ui.add(egui::Slider::new(&mut self.view.dist, 30.0..=3000.0).text("Distanz"));
+                    ui.label("Ziehen = Kamera orbitten (Drehung/Kippwinkel). Mausrad = Distanz. Q/E = Drehung, W/S = Kippwinkel.");
+                } else {
                 ui.add(egui::Slider::new(&mut self.view.cell, 4.0..=40.0).text("Zoom (px/Kachel)"));
                 // Drehung endlos: Slider zeigt den Winkel mod 360, der reale
                 // Wert in rot_deg akkumuliert aber weiter (mehrere Umdrehungen).
@@ -1154,6 +1260,7 @@ impl eframe::App for MapApp {
                 }
                 ui.add(egui::Slider::new(&mut self.view.tilt_deg, 0.0..=90.0).text("Kippwinkel (°)"));
                 ui.label("Mausrad = Zoom an Mausposition. Mittlere Maustaste = Karte verschieben. Shift + mittlere Maustaste ziehen: hoch/runter = Kippen 0–90°, links/rechts = Drehung um den Mauszeiger. Q/E = Drehung um Mauszeiger, W/S (oder Pfeile hoch/runter) = Kippen.");
+                }
                 if ui.button("Ansicht zurücksetzen").clicked() {
                     let e_off = self.view.e_off;
                     let e_scale = self.view.e_scale;
@@ -1454,11 +1561,21 @@ impl eframe::App for MapApp {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1400.0, 850.0]),
+        // MSAA + Depth-Buffer für die echte 3D-Ansicht (terrain3d)
+        multisampling: 4,
+        depth_buffer: 32,
         ..Default::default()
     };
     eframe::run_native(
-        "dnd-2d-map (2.5D)",
+        "dnd-2d-map (3D)",
         options,
-        Box::new(|_cc| Ok(Box::new(MapApp::default()) as Box<dyn eframe::App>)),
+        Box::new(|cc| {
+            let fmt = cc
+                .wgpu_render_state
+                .as_ref()
+                .map(|rs| rs.target_format)
+                .unwrap_or(eframe::wgpu::TextureFormat::Bgra8UnormSrgb);
+            Ok(Box::new(MapApp::new(fmt)) as Box<dyn eframe::App>)
+        }),
     )
 }
