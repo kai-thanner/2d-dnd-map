@@ -198,10 +198,22 @@ impl World {
                 rivers::recompute_river_widths(self);
             }
             Edit::AddRoad { from, to } => {
-                if let Some(path) = roads::carve_path(self, *from, *to) {
-                    for (x, y) in path {
-                        if let Some(t) = self.get_mut(x, y) {
-                            t.road = true;
+                let path = roads::carve_path(self, *from, *to);
+                match path {
+                    Some(path) => {
+                        for (x, y) in path {
+                            if let Some(t) = self.get_mut(x, y) {
+                                t.road = true;
+                            }
+                        }
+                    }
+                    None => {
+                        // Manuelle Straße geht IMMER (Spieler baut Brücke/Fähre):
+                        // direkte Linie von from nach to.
+                        for (x, y) in line(*from, *to) {
+                            if let Some(t) = self.get_mut(x, y) {
+                                t.road = true;
+                            }
                         }
                     }
                 }
@@ -210,6 +222,12 @@ impl World {
                         if let Some(r) = roads::nearest_road(self, p) {
                             if let Some(path) = roads::carve_path(self, p, r) {
                                 for (x, y) in path {
+                                    if let Some(t) = self.get_mut(x, y) {
+                                        t.road = true;
+                                    }
+                                }
+                            } else {
+                                for (x, y) in line(p, r) {
                                     if let Some(t) = self.get_mut(x, y) {
                                         t.road = true;
                                     }
@@ -236,6 +254,11 @@ impl World {
                     }
                     rivers::recompute_river_widths(self);
                     rivers::carve_valleys(self, self.sea_level);
+                    // Flussende in Senke -> See -> Überlauf -> neuer Fluss ...
+                    // (wie bei der Generierung; snow_temp über 世界-Temperatur ableiten)
+                    let snow_temp = 0.0; // konsistent zum bestehenden AddRiver-Arm
+                    crate::gen::lakes::fill(self, self.sea_level, snow_temp);
+                    rivers::recompute_river_widths(self);
                 }
             }
             Edit::AddPoi { x, y, kind } => {
@@ -284,4 +307,32 @@ impl World {
             }
         }
     }
+}
+
+/// Bresenham-Linie zwischen zwei Kacheln (für manuelle Straßen als Fallback).
+pub fn line(a: (usize, usize), b: (usize, usize)) -> Vec<(usize, usize)> {
+    let (mut x0, mut y0) = (a.0 as i64, a.1 as i64);
+    let (x1, y1) = (b.0 as i64, b.1 as i64);
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    let mut out = Vec::new();
+    loop {
+        out.push((x0 as usize, y0 as usize));
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x0 += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y0 += sy;
+        }
+    }
+    out
 }

@@ -121,12 +121,13 @@ fn reachable_settlements(
     reached
 }
 
-fn step_cost(w: &World, ni: usize, x: usize, y: usize, from_e: f32, jitter: &Noise, ports: &HashSet<usize>) -> f32 {
+fn step_cost(w: &World, x: usize, y: usize, from_e: f32, jitter: &Noise, ferry: &HashSet<usize>) -> f32 {
     let t = w.get(x, y).unwrap();
-    let _ = ports;
-    // Keine Straßen über Meer/See/Eis — nur Flüsse (Brücke, river) sind querbar.
+    let ni = w.idx(x, y);
+    // Keine Straßen über Meer/See — außer Fähre über schmale Gewässer
+    // (Buchten/Strait ≤ FERRY_MAX_TILES), und Brücken über Flüsse.
     if t.is_water() && t.effective_biome() != Biome::River {
-        return f32::INFINITY;
+        return if ferry.contains(&ni) { 6.0 } else { f32::INFINITY };
     }
     let base = match t.effective_biome() {
         Biome::Ocean | Biome::Ice | Biome::Lake => f32::INFINITY,
@@ -157,7 +158,7 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
             ^ ((to.0 as u64) << 5)
             ^ (to.1 as u64),
     );
-    let ports = compute_ports(w);
+    let ferry = ferry_tiles(w);
     let n = w.tiles.len();
     let mut dist = vec![f32::INFINITY; n];
     let mut prev: Vec<Option<usize>> = vec![None; n];
@@ -179,7 +180,7 @@ pub fn carve_path(w: &World, from: (usize, usize), to: (usize, usize)) -> Option
         let from_e = w.tiles[i].elevation;
         for (nx, ny) in w.neighbors8(x, y) {
             let ni = w.idx(nx, ny);
-            let nd = c + step_cost(w, ni, nx, ny, from_e, &jitter, &ports);
+            let nd = c + step_cost(w, nx, ny, from_e, &jitter, &ferry);
             if nd < dist[ni] {
                 dist[ni] = nd;
                 prev[ni] = Some(i);
@@ -228,6 +229,46 @@ fn road_navigable_water(t: &Tile) -> bool {
         Some(WaterKind::River) => t.river_width >= 2,
         _ => false,
     }
+}
+
+/// Maximale Größe eines Gewässers, das per Fähre überquert werden darf
+/// (kleine Buchten/Straße — nicht der große See oder das Meer).
+pub const FERRY_MAX_TILES: usize = 12;
+
+/// Alle Wasser-Tiles in kleinen Gewässer-Komponenten (≤ FERRY_MAX_TILES):
+/// dort darf eine Straße als Fähre queren.
+pub fn ferry_tiles(w: &World) -> HashSet<usize> {
+    let mut ferry = HashSet::new();
+    let mut visited = vec![false; w.tiles.len()];
+    for y in 0..w.height {
+        for x in 0..w.width {
+            let i = w.idx(x, y);
+            if visited[i] || !w.tiles[i].is_water() {
+                continue;
+            }
+            let mut comp = Vec::new();
+            let mut stack = vec![i];
+            visited[i] = true;
+            while let Some(ci) = stack.pop() {
+                comp.push(ci);
+                let cx = ci % w.width;
+                let cy = ci / w.width;
+                for n in w.neighbors8(cx, cy) {
+                    let ni = w.idx(n.0, n.1);
+                    if !visited[ni] && w.tiles[ni].is_water() {
+                        visited[ni] = true;
+                        stack.push(ni);
+                    }
+                }
+            }
+            if comp.len() <= FERRY_MAX_TILES {
+                for c in comp {
+                    ferry.insert(c);
+                }
+            }
+        }
+    }
+    ferry
 }
 
 pub fn compute_ports(w: &World) -> HashSet<usize> {

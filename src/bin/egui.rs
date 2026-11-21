@@ -871,13 +871,15 @@ impl MapApp {
                             if !nt.road {
                                 continue;
                             }
-                            // Diagonale: Segment darf kein Wasser tile kreuzen
+                            // Diagonale: Segment darf kein Meer/See kreuzen
+                            // (Fluss-Brücken sind ok)
                             if nx != x && ny != y {
-                                let side1 = world.get(nx, y).unwrap();
-                                let side2 = world.get(x, ny).unwrap();
-                                if (side1.is_water() && !side1.road)
-                                    || (side2.is_water() && !side2.road)
-                                {
+                                let blocking = |t: &dnd_2d_map::world::Tile| {
+                                    t.is_water()
+                                        && t.water != Some(WaterKind::River)
+                                        && !t.road
+                                };
+                                if blocking(world.get(nx, y).unwrap()) || blocking(world.get(x, ny).unwrap()) {
                                     continue;
                                 }
                             }
